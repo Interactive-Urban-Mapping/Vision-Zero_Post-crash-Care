@@ -905,11 +905,11 @@ function MapPanel({
           <span className="sr-only">Show data information</span>
         </button>
         <button type="button" className="map-icon-button" onClick={onReset} title="Reset map to the opening layer state">
-          <img src="/icons/reset.png" alt="" aria-hidden="true" />
+          <img src={assetUrl("icons/reset.png")} alt="" aria-hidden="true" />
           <span className="sr-only">Reset map</span>
         </button>
         <button type="button" className="map-icon-button" onClick={toggleFullscreen} title="Show workspace fullscreen">
-          <img src="/icons/fullscreen.png" alt="" aria-hidden="true" />
+          <img src={assetUrl("icons/fullscreen.png")} alt="" aria-hidden="true" />
           <span className="sr-only">Show workspace fullscreen</span>
         </button>
       </div>
