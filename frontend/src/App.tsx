@@ -130,20 +130,21 @@ const FALLBACK_STUDY: Study = {
   map_center: [-79.38, 43.70],
   default_zoom: 10,
 };
-const CARTO_LIGHT_STYLE = {
+const OPENSTREETMAP_STYLE = {
   version: 8,
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   sources: {
-    cartoLight: {
+    openStreetMap: {
       type: "raster",
-      tiles: ["https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"],
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "Basemap: Carto | Data: OpenStreetMap contributors",
+      maxzoom: 19,
+      attribution: "© OpenStreetMap contributors",
     },
   },
-  layers: [{ id: "carto-light", type: "raster", source: "cartoLight" }],
+  layers: [{ id: "openstreetmap", type: "raster", source: "openStreetMap" }],
 } as const;
-const MAP_STYLE = import.meta.env.VITE_MAP_STYLE_URL ?? CARTO_LIGHT_STYLE;
+const MAP_STYLE = import.meta.env.VITE_MAP_STYLE_URL ?? OPENSTREETMAP_STYLE;
 
 const workspaceCopy: Record<Workspace, { title: string; description: string }> = {
   context: {
@@ -1726,7 +1727,6 @@ export function App() {
     </main>
   );
 }
-
 
 
 
