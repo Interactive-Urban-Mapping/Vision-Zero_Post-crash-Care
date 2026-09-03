@@ -3,6 +3,7 @@ import maplibregl, { Map } from "maplibre-gl";
 import { ManualAllocationGeoJSON, ManualAllocationResult, runManualAllocation } from "./manualAllocator";
 
 type Workspace = "context" | "historical" | "ml" | "manual";
+type BasemapMode = "positron" | "3d";
 
 type Study = { id: string; label: string; map_center: [number, number]; default_zoom: number };
 
@@ -132,6 +133,7 @@ const FALLBACK_STUDY: Study = {
 };
 const OPENFREE_MAP_POSITRON_STYLE = "https://tiles.openfreemap.org/styles/positron";
 const MAP_STYLE = import.meta.env.VITE_MAP_STYLE_URL ?? OPENFREE_MAP_POSITRON_STYLE;
+const BUILDING_3D_LAYER_ID = "openfreemap-3d-buildings";
 
 const workspaceCopy: Record<Workspace, { title: string; description: string }> = {
   context: {
@@ -726,6 +728,8 @@ function MapPanel({
   const map = useRef<Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [showDataInfo, setShowDataInfo] = useState(false);
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>("positron");
+  const [basemapMenuOpen, setBasemapMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!mapNode.current || !study || map.current) return;
@@ -745,6 +749,34 @@ function MapPanel({
       setMapReady(false);
     };
   }, [study]);
+
+  useEffect(() => {
+    if (!map.current || !mapReady) return;
+    const currentMap = map.current;
+    if (basemapMode === "3d") {
+      if (!currentMap.getLayer(BUILDING_3D_LAYER_ID) && currentMap.getSource("openmaptiles")) {
+        currentMap.addLayer({
+          id: BUILDING_3D_LAYER_ID,
+          type: "fill-extrusion",
+          source: "openmaptiles",
+          "source-layer": "building",
+          minzoom: 15,
+          filter: ["!", ["has", "hide_3d"]],
+          paint: {
+            "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+            "fill-extrusion-color": "#d8d3ca",
+            "fill-extrusion-height": ["coalesce", ["get", "render_height"], 0],
+            "fill-extrusion-opacity": 0.78,
+          },
+        });
+        bringReferenceLayersToFront(currentMap);
+      }
+      currentMap.easeTo({ pitch: 50, bearing: -15, zoom: Math.max(currentMap.getZoom(), 15), duration: 700 });
+    } else {
+      if (currentMap.getLayer(BUILDING_3D_LAYER_ID)) currentMap.removeLayer(BUILDING_3D_LAYER_ID);
+      currentMap.easeTo({ pitch: 0, bearing: 0, duration: 500 });
+    }
+  }, [basemapMode, mapReady]);
 
   useEffect(() => {
     if (!map.current || !mapReady || layers.length === 0) return;
@@ -910,6 +942,34 @@ function MapPanel({
           </div>
         </div>
       )}
+      <div className={`basemap-control ${basemapMenuOpen ? "open" : ""}`}>
+        <button
+          type="button"
+          className="basemap-control-toggle"
+          aria-label="Choose basemap"
+          title="Choose basemap"
+          aria-expanded={basemapMenuOpen}
+          onClick={() => setBasemapMenuOpen((value) => !value)}
+        >
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path className="basemap-icon-top" d="M16 4 28 11 16 18 4 11 16 4Z" />
+            <path d="m4 15 12 7 12-7" />
+            <path d="m4 20 12 7 12-7" />
+          </svg>
+        </button>
+        {basemapMenuOpen && (
+          <div className="basemap-options" role="radiogroup" aria-label="Basemap">
+            <label>
+              <input type="radio" name="basemap" checked={basemapMode === "positron"} onChange={() => setBasemapMode("positron")} />
+              <span><strong>Positron</strong><small>Default · fastest</small></span>
+            </label>
+            <label>
+              <input type="radio" name="basemap" checked={basemapMode === "3d"} onChange={() => setBasemapMode("3d")} />
+              <span><strong>3D buildings</strong><small>Shown from zoom 15 · terrain off</small></span>
+            </label>
+          </div>
+        )}
+      </div>
       <MapLegend layers={layers} visibleLayers={visibleLayers} manualColorMap={manualStationLegend} />
     </div>
   );
@@ -1714,6 +1774,4 @@ export function App() {
     </main>
   );
 }
-
-
 

@@ -54,6 +54,20 @@ nav button.active { background: #17212b; color: #ffffff; }
 .legend-ramp { height: 12px; border-radius: 999px; border: 1px solid rgba(0, 0, 0, .18); }
 .legend-ramp-labels { display: flex; justify-content: space-between; margin-top: .2rem; font-size: .72rem; color: #667380; }
 .legend-stretch { margin: .18rem 0 0; font-size: .66rem; color: #56626e; }
+.basemap-control { position: absolute; right: .85rem; bottom: 3.25rem; z-index: 1001; color: #26313c; }
+.basemap-control-toggle { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid #d4dbe0; border-radius: .65rem; background: rgba(255, 255, 255, .98); box-shadow: 0 4px 12px rgba(23, 33, 43, .18); color: #737a80; cursor: pointer; }
+.basemap-control-toggle:hover { background: #f6f8f9; }
+.basemap-control-toggle svg { width: 28px; height: 28px; overflow: visible; }
+.basemap-control-toggle path { fill: #b8bdc1; stroke: #777e84; stroke-width: 1.25; stroke-linejoin: round; }
+.basemap-control-toggle path:not(.basemap-icon-top) { fill: none; stroke-width: 2; }
+.basemap-icon-top { fill: #e9ecee !important; }
+.basemap-options { position: absolute; right: 0; bottom: 52px; width: 220px; padding: .35rem .65rem; border: 1px solid #aebbc7; border-radius: .4rem; background: rgba(241, 244, 247, .98); box-shadow: 0 -4px 12px rgba(23, 33, 43, .12); }
+.basemap-options label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: .5rem; align-items: start; margin: 0; padding: .48rem 0; cursor: pointer; }
+.basemap-options label + label { border-top: 1px solid #dce2e7; }
+.basemap-options input { width: 15px; height: 15px; margin: .12rem 0 0; padding: 0; }
+.basemap-options span { display: grid; gap: .1rem; }
+.basemap-options strong { font-size: .8rem; }
+.basemap-options small { color: #667380; font-size: .68rem; line-height: 1.25; }
 label { display: grid; grid-template-columns: 1fr 84px; gap: .75rem; align-items: center; font-size: .88rem; margin: .85rem 0; }
 input { width: 100%; padding: .4rem; border: 1px solid #b8c4ce; border-radius: .3rem; }
 .run { width: 100%; margin-top: .7rem; padding: .7rem; border: 0; border-radius: .35rem; background: #17212b; color: white; cursor: pointer; }
