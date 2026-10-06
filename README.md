@@ -1,6 +1,12 @@
 # Vision Zero Post-crash Care Webmap
 
-An interactive MapLibre webmap for examining post-crash emergency-response conditions and comparing historical, proactive, and user-defined station-allocation scenarios in Toronto.
+This interactive tool was developed for the study **“A Decision-Intelligence Framework for Resilient Emergency Response to Motor Vehicle Collisions within Vision Zero Post-Crash Care.”** It supports the exploration of fire service allocation in Toronto, considering both motor vehicle collisions (MVCs) and non-MVC responsibilities.
+
+Users can inspect existing incident and response conditions, compare historical and machine-learning-informed allocation scenarios, and examine travel time, capacity utilization, multi-path accessibility, weighted travel-time coverage, and MVC path entropy. A browser-based manual solver also supports exploratory allocation using user-selected objective weights and upper workload limits; its results are approximate.
+
+![Vision Zero tool showing historical Scenario 3 station allocation and scenario analysis](docs/images/vision-zero-app.jpg)
+
+*Historical allocation workspace showing the Scenario 3 MVC allocation map and scenario analysis controls.*
 
 ## Open the webmap
 
@@ -10,7 +16,7 @@ The website is deployed automatically from the `main` branch through GitHub Page
 
 ## Main app source
 
-`frontend` is the maintained source for both local use and deployment. The Desktop frontend path points to this same folder.
+`frontend` is the maintained source for both local use and deployment.
 
 ## Run locally
 
