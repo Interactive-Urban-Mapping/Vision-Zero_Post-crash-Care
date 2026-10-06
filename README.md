@@ -2,17 +2,15 @@
 
 This interactive tool was developed for the study **“A Decision-Intelligence Framework for Resilient Emergency Response to Motor Vehicle Collisions within Vision Zero Post-Crash Care.”** It supports the exploration of fire service allocation in Toronto, considering both motor vehicle collisions (MVCs) and non-MVC responsibilities.
 
+Open the webmap
+
+[Launch the Vision Zero Post-crash Care webmap](https://interactive-urban-mapping.github.io/Vision-Zero_Post-crash-Care/)
+
 Users can inspect existing incident and response conditions, compare historical and Machine Learning-informed allocation scenarios, and examine travel time, capacity utilization, multi-path accessibility, weighted travel time coverage, and MVC path entropy. A browser-based manual solver also supports exploratory allocation using user-selected objective weights and upper workload limits; its results are approximate.
 
 ![Vision Zero tool showing historical Scenario 3 station allocation and scenario analysis](docs/images/vision-zero-app.jpg)
 
 *Historical allocation workspace showing the Scenario 3 MVC allocation map and scenario analysis controls.*
-
-## Open the webmap
-
-[Launch the Vision Zero Post-crash Care webmap](https://interactive-urban-mapping.github.io/Vision-Zero_Post-crash-Care/)
-
-The website is deployed automatically from the `main` branch through GitHub Pages.
 
 ## Main app source
 
