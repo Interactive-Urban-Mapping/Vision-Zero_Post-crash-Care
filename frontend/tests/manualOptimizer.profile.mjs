@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import GLPK from 'glpk.js/node';
+import {solveManualInputs} from '../src/manualOptimizer.ts';
+const inputs=JSON.parse(fs.readFileSync('public/layers/manual/manual_inputs.json','utf8'));
+const geometry=JSON.parse(fs.readFileSync('public/layers/baseline_grids.geojson','utf8'));
+console.log('Solving current full inputs with custom MVC/non-MVC 85–115% bands and 250 paths.');
+const start=Date.now(); const engine=await GLPK(); const profile={...engine,solve:async(lp,options)=>{console.log('Start',lp.name,'variables',lp.objective.vars.length,'seconds',(Date.now()-start)/1000); const value=await engine.solve(lp,{...options,tmlim:20});console.log('End',lp.name,value.result.status,'seconds',(Date.now()-start)/1000);return value;}};
+const result=await solveManualInputs(inputs,geometry,{mvcTime:.6,mvcPaths:.2,nonMvcTime:.2},{mvcLower:0,mvcUpper:1.3,nonMvcLower:0,nonMvcUpper:1.3,maxPaths:250},profile);
+console.log(JSON.stringify({elapsedSeconds:(Date.now()-start)/1000,assignedGrids:result.assignedGrids,travelTime:result.travelTime,allocationCounts:result.diagnostics.allocationCounts,solver:result.diagnostics.solver}));
+fs.mkdirSync('../../outputs/manual_optimizer_validation',{recursive:true});
+fs.writeFileSync('../../outputs/manual_optimizer_validation/full_run.json',JSON.stringify(result));

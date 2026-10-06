@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import GLPK from 'glpk.js/node';
+import {solveManualInputs} from '../src/manualOptimizer.ts';
+const inputs=JSON.parse(fs.readFileSync('public/layers/manual/manual_inputs.json','utf8'));
+const geometry=JSON.parse(fs.readFileSync('public/layers/baseline_grids.geojson','utf8'));
+console.log('Solving current full inputs with upper-only 130% limits, 16 candidates and 250 paths.');
+const start=Date.now();
+const result=await solveManualInputs(inputs,geometry,{mvcTime:.6,mvcPaths:.2,nonMvcTime:.2},{mvcLower:0,mvcUpper:1.3,nonMvcLower:0,nonMvcUpper:1.3,maxPaths:250},await GLPK());
+console.log(JSON.stringify({elapsedSeconds:(Date.now()-start)/1000,assignedGrids:result.assignedGrids,travelTime:result.travelTime,allocationCounts:result.diagnostics.allocationCounts,solver:result.diagnostics.solver}));
+fs.mkdirSync('../../outputs/manual_optimizer_validation',{recursive:true});
+fs.writeFileSync('../../outputs/manual_optimizer_validation/full_run.json',JSON.stringify(result));

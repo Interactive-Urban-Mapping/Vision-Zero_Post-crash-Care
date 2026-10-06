@@ -8,6 +8,10 @@ An interactive MapLibre webmap for examining post-crash emergency-response condi
 
 The website is deployed automatically from the `main` branch through GitHub Pages.
 
+## Main app source
+
+`frontend` is the maintained source for both local use and deployment. The Desktop frontend path points to this same folder.
+
 ## Run locally
 
 Requirements: Node.js 20 or newer and npm.
