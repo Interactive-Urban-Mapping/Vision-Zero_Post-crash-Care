@@ -8,9 +8,9 @@ Open the webmap
 
 Users can inspect existing incident and response conditions, compare historical and Machine Learning-informed allocation scenarios, and examine travel time, capacity utilization, multi-path accessibility, weighted travel time coverage, and MVC path entropy. A browser-based manual solver also supports exploratory allocation using user-selected objective weights and upper workload limits; its results are approximate.
 
-![Vision Zero tool showing historical Scenario 3 station allocation and scenario analysis](docs/images/vision-zero-app.jpg)
+![Vision Zero tool showing Toronto incident locations and city context statistics](docs/images/vision-zero-app.png)
 
-*Historical allocation workspace showing the Scenario 3 MVC allocation map and scenario analysis controls.*
+*City context workspace showing MVC incidents, fire stations, and existing travel and response time statistics.*
 
 ## How it works
 
