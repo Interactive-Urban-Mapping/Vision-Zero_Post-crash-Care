@@ -52,6 +52,8 @@ type LayerDefinition = {
 
   lineOpacity?: number;
 
+  lineWidth?: number;
+
   opacity: number;
 
   featureCount: number;
@@ -612,7 +614,7 @@ function addLayer(map: Map, layer: LayerDefinition) {
 
       source: layer.id,
 
-      paint: { "line-color": layer.lineColor ?? layer.color ?? "#64748b", "line-width": 1.2, "line-opacity": layer.lineOpacity ?? 0.85 },
+      paint: { "line-color": layer.lineColor ?? layer.color ?? "#64748b", "line-width": layer.lineWidth ?? 1.2, "line-opacity": layer.lineOpacity ?? 0.85 },
 
     });
 
@@ -1600,9 +1602,7 @@ function MapPanel({
 
     };
 
-    if (currentMap.isStyleLoaded()) loadLayers();
-
-    else currentMap.once("load", loadLayers);
+    loadLayers();
 
   }, [layers, visibleLayers, mapReady]);
 
@@ -1756,6 +1756,38 @@ function MapPanel({
 
     const currentMap = map.current;
 
+    let highlightFrame: number | null = null;
+    let popup: maplibregl.Popup | null = null;
+    const highlightIds: string[] = [];
+    const clearHighlight = () => {
+      if (highlightFrame !== null) cancelAnimationFrame(highlightFrame);
+      highlightFrame = null;
+      highlightIds.splice(0).forEach(id => { if (currentMap.getLayer(id)) currentMap.removeLayer(id); });
+    };
+    const highlightStation = (station: string) => {
+      const sources = layers.filter(layer => visibleLayers[layer.id] && layer.id.startsWith(allocationLayerPrefix) && layer.kind === "fill" && layer.label.toLowerCase().includes("area allocation") && currentMap.getSource(layer.id)).map(layer=>layer.id);
+      Object.entries(manualAllocationSourceIds).forEach(([key,source])=>{if(manualResult && manualVisible[key as ManualVisibleKey] && currentMap.getSource(source)) sources.push(source);});
+      if (!sources.length) return;
+      const filter:any = ["==",["to-string",["get","Allocated_Station"]],station];
+      const strokes:string[]=[];
+      sources.forEach((source,index)=>{
+        const halo=`station-highlight-${index}-halo`, line=`station-highlight-${index}-line`;
+        currentMap.addLayer({id:halo,type:"line",source,filter,layout:{"line-join":"round","line-cap":"round"},paint:{"line-color":"#ffffff","line-width":7,"line-opacity":.9}});
+        currentMap.addLayer({id:line,type:"line",source,filter,layout:{"line-join":"round","line-cap":"round"},paint:{"line-color":"#f5a623","line-width":3.5,"line-opacity":1}});
+        highlightIds.push(halo,line);strokes.push(line);
+      });
+      bringFireStationsToFront(currentMap);
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const started=performance.now();
+      const pulse=(now:number)=>{
+        const progress=Math.min(1,(now-started)/2400);
+        const opacity=progress===1?1:.55+.45*(1+Math.cos(progress*Math.PI*4))/2;
+        strokes.forEach(id=>{if(currentMap.getLayer(id)){currentMap.setPaintProperty(id,"line-opacity",opacity);currentMap.setPaintProperty(id,"line-width",progress===1?3.5:3.5+1.5*Math.sin(progress*Math.PI*2)**2);}});
+        highlightFrame=progress<1?requestAnimationFrame(pulse):null;
+      };
+      highlightFrame=requestAnimationFrame(pulse);
+    };
+
     const onClick = (event: maplibregl.MapMouseEvent) => {
 
       const activeLayerIds = [
@@ -1772,19 +1804,25 @@ function MapPanel({
 
       const features = currentMap.queryRenderedFeatures(event.point, { layers: activeLayerIds });
 
-      const feature = features[0];
-
+      const feature = features.find(item => item.source === "fire_stations") ?? features[0];
+      popup?.remove();
+      clearHighlight();
       if (!feature?.properties) return;
+      if (feature.source === "fire_stations") {
+        const station = Number(feature.properties.STATION10);
+        if (Number.isFinite(station)) highlightStation(String(station));
+      }
 
       const layerId = String(feature.source);
 
-      new maplibregl.Popup({ maxWidth: "360px" })
+      popup = new maplibregl.Popup({ maxWidth: "360px" })
 
         .setLngLat(event.lngLat)
 
         .setHTML(popupHtml(layerId, feature.properties))
 
         .addTo(currentMap);
+      popup.on("close", clearHighlight);
 
     };
 
@@ -1822,6 +1860,8 @@ function MapPanel({
 
     return () => {
 
+      popup?.remove();
+      clearHighlight();
       currentMap.off("click", onClick);
 
       currentMap.off("mousemove", onMove);
@@ -1830,7 +1870,7 @@ function MapPanel({
 
     };
 
-  }, [layers, visibleLayers, manualResult, manualVisible]);
+  }, [layers, visibleLayers, manualResult, manualVisible, resetKey]);
 
   const manualStationLegend = workspace === "manual" && manualResult && (manualVisible.mvc || manualVisible.nonMvc)
 
@@ -2136,6 +2176,72 @@ function travelLegendLabel(row: TravelTimeRow) {
 
 }
 
+function CoverageLineChart({ rows, title }: { rows: CoverageRow[]; title: string }) {
+  const [highlight,setHighlight]=useState<string|null>(null);
+  const thresholds=[120,180,240,300,360];
+  const styles=[{color:"#64748b",dash:"7 4"},{color:"#356fc3",dash:""},{color:"#8b5cbd",dash:"3 3"},{color:"#078895",dash:""},{color:"#c77727",dash:"9 3 2 3"}];
+  const x=(index:number)=>40+index*65;
+  const y=(coverage:number)=>186-coverage*156;
+  return <div className="diagnostic-scenario-group coverage-line-group">
+    <h4>{title}</h4>
+    <svg className="coverage-line-chart" viewBox="0 0 320 235" role="img" aria-label={`${title}: weighted travel-time coverage by threshold`}>
+      <text x="40" y="14" className="coverage-axis-title">Coverage (%)</text>
+      {[0,25,50,75,100].map(t=><g key={t}><line x1="40" x2="300" y1={y(t/100)} y2={y(t/100)} className="coverage-grid"/><text x="32" y={y(t/100)+3} textAnchor="end" className="coverage-tick">{t}</text></g>)}
+      {thresholds.map((t,index)=><text key={t} x={x(index)} y="204" textAnchor="middle" className="coverage-tick">{t}</text>)}
+      <text x="170" y="225" textAnchor="middle" className="coverage-axis-title">Travel-time threshold (sec)</text>
+      {rows.map((row,index)=>{
+        const style=styles[index%styles.length];
+        return <g key={row.Scenario} opacity={highlight && highlight!==row.Scenario?.toString() ? .14 : 1}>
+          <polyline points={row.Coverage.map((v,i)=>`${x(i)},${y(v)}`).join(" ")} fill="none" stroke={style.color} strokeWidth={highlight===row.Scenario?3:2} strokeDasharray={style.dash} strokeLinejoin="round" strokeLinecap="round"/>
+          {row.Coverage.map((value,i)=><circle key={i} data-coverage={value} data-threshold={thresholds[i]} tabIndex={0} aria-label={`${row.Scenario}, within ${thresholds[i]} seconds: ${(value*100).toFixed(2)}% coverage`} cx={x(i)} cy={y(value)} r={highlight===row.Scenario?4:2.7} fill="#fff" stroke={style.color} strokeWidth="1.5"><title>{row.Scenario}: ≤{thresholds[i]} sec — {(value*100).toFixed(2)}%</title></circle>)}
+        </g>;
+      })}
+    </svg>
+    <div className="coverage-line-legend" role="group" aria-label={`${title} scenario highlighting`}>
+      {rows.map((row,index)=><button key={row.Scenario} type="button" aria-pressed={highlight===row.Scenario} onClick={()=>setHighlight(highlight===row.Scenario?null:row.Scenario)}><svg width="22" height="10" aria-hidden="true"><line x1="1" x2="21" y1="5" y2="5" stroke={styles[index%styles.length].color} strokeWidth="2" strokeDasharray={styles[index%styles.length].dash}/></svg>{row.Scenario}</button>)}
+    </div>
+    <p className="chart-note">Select a scenario to highlight its line; hover over a point for its exact percentage.</p>
+
+  </div>;
+}
+
+function ScenarioTravelComparison({ rows }: { rows: TravelTimeRow[] }) {
+  const [metric, setMetric] = useState<"mvc" | "remaining" | "overall">("mvc");
+  const metrics = [{key:"mvc" as const,label:"MVC",color:"#078895"},{key:"remaining" as const,label:"non_MVC",color:"#356fc3"},{key:"overall" as const,label:"Overall",color:"#8260b8"}];
+  const selected = metrics.find(m=>m.key===metric)!;
+  const values=rows.flatMap(row=>metrics.map(m=>row[m.key])).filter((v):v is number=>v!=null && Number.isFinite(v));
+  const minimum=Math.floor(Math.min(...values)/5)*5;
+  const maximum=Math.max(minimum+5,Math.ceil(Math.max(...values)/5)*5);
+  const x=(value:number)=>72+(value-minimum)/(maximum-minimum)*206;
+  return <div className="scenario-travel-comparison">
+    <div className="travel-metric-picker" role="group" aria-label="Travel-time measure">
+      {metrics.map(m=><button key={m.key} type="button" aria-pressed={metric===m.key} onClick={()=>setMetric(m.key)}>{m.label}</button>)}
+    </div>
+    <p className="chart-note">Travel time (sec). All scenarios use the same scale; lower values indicate shorter travel times.</p>
+    {(rows.some(row=>row.scenario.toUpperCase().includes("RF")) ? ["RF","XGB"] : ["Historical"]).map(variant=>{
+      const group=variant==="Historical" ? rows : rows.filter(r=>r.scenario.toUpperCase().includes(variant));
+      const baseline=group.find(r=>r.scenario.toLowerCase().includes("existing condition"));
+      const baselineValue=baseline?.[metric];
+      return <section className="chart-block travel-comparison-card" key={variant} aria-label={`${variant} travel-time comparison`}>
+        <div className="travel-comparison-heading"><h3>{variant}</h3><span>{selected.label} · sec</span></div>
+        {baseline && <p className="travel-baseline"><span>{baseline.scenario}</span><strong>{valueLabel(baselineValue)} sec</strong></p>}
+        <svg viewBox={`0 0 310 ${group.length*34+36}`} className="travel-dot-chart" role="img" aria-label={`${variant} ${selected.label} travel times by scenario`}>
+          {[minimum,(minimum+maximum)/2,maximum].map(t=><g key={t}><line x1={x(t)} x2={x(t)} y1="7" y2={group.length*34} className="travel-dot-grid"/><text x={x(t)} y={group.length*34+22} textAnchor="middle" className="travel-dot-tick">{valueLabel(t)}</text></g>)}
+          {baselineValue!=null && <line x1={x(baselineValue)} x2={x(baselineValue)} y1="7" y2={group.length*34} className="travel-baseline-rule"/>}
+          {group.map((row,index)=>{
+            const value=row[metric]; const y=22+index*34;const isBaseline=row===baseline;
+            const short=row.scenario.match(/Scenario (\d+(?:\.\d+)?)/);
+            const label=isBaseline ? "Existing" : short ? `S${short[1]}` : shortScenarioName(row.scenario);
+            return <g key={row.scenario}><title>{row.scenario}: {selected.label} {valueLabel(value)} sec</title><text x="4" y={y+4} className={`travel-dot-label ${isBaseline ? "baseline" : ""}`}>{label}</text>{value!=null && <><line x1="72" x2={x(value)} y1={y} y2={y} className="travel-dot-guide"/><circle cx={x(value)} cy={y} r={isBaseline?4:5} fill={isBaseline?"#fff":selected.color} stroke={isBaseline?"#6b7b8b":selected.color} strokeWidth="2"/><text x={x(value)} y={y-10} textAnchor="middle" className="travel-dot-value">{valueLabel(value)}</text></>}</g>;
+          })}
+        </svg>
+
+        {baseline && <details className="travel-value-details"><summary>Improvement (%)</summary><div className="change-table"><table><thead><tr><th>Scenario</th><th>MVC improvement (%)</th><th>non_MVC improvement (%)</th><th>Overall improvement (%)</th></tr></thead><tbody>{group.filter(row=>row!==baseline).map(row=><tr key={row.scenario}><td>{shortScenarioName(row.scenario)}</td>{metrics.map(m=><td key={m.key}>{percentChangeLabel(baseline[m.key],row[m.key])}</td>)}</tr>)}</tbody></table></div></details>}
+      </section>;
+    })}
+  </div>;
+}
+
 function TravelTimeChart({ rows }: { rows: TravelTimeRow[] }) {
 
   const series = [
@@ -2187,6 +2293,8 @@ function TravelTimeChart({ rows }: { rows: TravelTimeRow[] }) {
     return fallbackBaseline;
 
   };
+
+  if (!custom) return <ScenarioTravelComparison rows={rows} />;
 
   const center = 160;
 
@@ -2385,6 +2493,7 @@ function StationAnalysisChart({ rows }: { rows: StationAnalysisRow[] }) {
   return (
 
     <div className="chart-block station-chart">
+      <p className="scenario-selection-prompt">Please select a scenario to view its station results.</p>
 
       {scenarioNames.map((scenario) => {
 
@@ -2397,6 +2506,14 @@ function StationAnalysisChart({ rows }: { rows: StationAnalysisRow[] }) {
             <summary>{shortScenarioName(scenario)} <span>{scenarioRows.length} stations</span></summary>
 
             <div className="station-table">
+              <div className="station-row station-column-headings">
+                <span>Station</span>
+                <span className="station-heading-mvc" title="Weighted average MVC travel time">MVC travel<br />(sec)</span>
+                <span className="station-heading-nonmvc" title="Weighted average non-MVC travel time">Non-MVC travel<br />(sec)</span>
+                <span className="station-heading-capacity" title="Allocation relative to the upper capacity allowance">Capacity<br />(% of upper allowance)</span>
+                <span className="station-heading-paths" title="Demand-weighted average number of MVC paths within 240 seconds">Weighted MVC paths<br />(≤240 sec)</span>
+              </div>
+
 
               {scenarioRows.map((row) => (
 
@@ -2426,105 +2543,15 @@ function StationAnalysisChart({ rows }: { rows: StationAnalysisRow[] }) {
 
       <div className="chart-legend">
 
-        <span><i className="purple" />MVC travel</span>
+        <span><i className="purple" />MVC travel time (sec)</span>
 
-        <span><i className="cyan" />non_MVC travel</span>
+        <span><i className="cyan" />Non-MVC travel time (sec)</span>
 
-        <span><i className="slate" />Capacity %</span>
+        <span><i className="slate" />Capacity (% of upper allowance)</span>
 
-        <span><i className="green" />MVC paths</span>
-
-      </div>
-
-    </div>
-
-  );
-
-}
-
-function StationChangeChart({ rows }: { rows: StationChangeRow[] }) {
-
-  const scenarioNames = Array.from(new Set(rows.map((row) => row.scenario)));
-
-  if (scenarioNames.length === 0) return <p className="small">No station change rows are available for this tab.</p>;
-
-  const maxAbsChange = Math.max(1, ...rows.map((row) => Math.abs(Number(row.averageChangeSec ?? 0))));
-
-  return (
-
-    <div className="chart-block station-change-chart">
-
-      {scenarioNames.map((scenario) => {
-
-        const scenarioRows = rows
-
-          .filter((row) => row.scenario === scenario && row.averageChangeSec != null)
-
-          .sort((a, b) => Math.abs(Number(b.averageChangeSec ?? 0)) - Math.abs(Number(a.averageChangeSec ?? 0)));
-
-        return (
-
-          <details className="station-scenario" key={scenario}>
-
-            <summary>{shortScenarioName(scenario)} <span>{scenarioRows.length} stations</span></summary>
-
-            <div className="change-bar-table">
-
-              {scenarioRows.map((row) => {
-
-                const change = Number(row.averageChangeSec ?? 0);
-
-                const width = `${(Math.abs(change) / maxAbsChange) * 50}%`;
-
-                return (
-
-                  <div className="change-bar-row" key={`${scenario}-${row.station}`}>
-
-                    <span className="station-id">{row.station}</span>
-
-                    <span className="change-bar-track">
-
-                      <span
-
-                        className={`change-bar-fill ${change <= 0 ? "improved" : "worsened"}`}
-
-                        style={change <= 0 ? { right: "50%", width } : { left: "50%", width }}
-
-                        title={`Baseline ${valueLabel(row.averageBaselineSec)} sec | Optimized ${valueLabel(row.averageOptimizedSec)} sec`}
-
-                      />
-
-                    </span>
-
-                    <span className={`change-bar-value ${change <= 0 ? "improved-text" : "worsened-text"}`}>
-
-                      {change > 0 ? "+" : ""}{change.toFixed(2)} sec
-
-                    </span>
-
-                  </div>
-
-                );
-
-              })}
-
-            </div>
-
-          </details>
-
-        );
-
-      })}
-
-      <div className="chart-legend">
-
-        <span><i className="green" />Improved travel time</span>
-
-        <span><i className="red" />Worse travel time</span>
+        <span><i className="green" />Weighted MVC paths (≤240 sec)</span>
 
       </div>
-
-      <p className="chart-note">Bars compare each station’s weighted baseline travel time with its average after reallocation. Negative values indicate faster travel. Historical weights use incident severity; ML weights use predicted demand. Stations without MVC demand for comparison are excluded.</p>
 
     </div>
 
@@ -2922,30 +2949,22 @@ function ContextInformationPanel({ data }: { data?: ContextInfoData }) {
 
     <div className="analysis-panel info-panel">
 
-      <p className="eyebrow">Information</p>
+      <div className="information-heading"><span className="analysis-icon" aria-hidden="true">i</span><p className="eyebrow">Information</p></div>
 
       <h3>Existing incident composition</h3>
 
       {incidentComposition ? (
 
-        <div className="incident-share-table">
-
-          <table>
-
-            <thead><tr><th>Incident type</th><th>Count</th><th>Percentage</th></tr></thead>
-
-            <tbody>
-
-              <tr><td>MVC</td><td>{incidentComposition.mvcCount.toLocaleString()}</td><td>{valueLabel(incidentComposition.mvcPercent)}%</td></tr>
-
-              <tr><td>Non-MVC</td><td>{incidentComposition.nonMvcCount.toLocaleString()}</td><td>{valueLabel(incidentComposition.nonMvcPercent)}%</td></tr>
-
-              <tr className="total-row"><td>Total</td><td>{incidentComposition.totalCount.toLocaleString()}</td><td>100.00%</td></tr>
-
-            </tbody>
-
-          </table>
-
+        <div className="incident-overview">
+          <div className="incident-share-bar" role="img" aria-label={`MVC ${valueLabel(incidentComposition.mvcPercent)}%; Non-MVC ${valueLabel(incidentComposition.nonMvcPercent)}%`}>
+            <span className="incident-share-mvc" style={{width:`${incidentComposition.mvcPercent}%`}} />
+            <span className="incident-share-nonmvc" style={{width:`${incidentComposition.nonMvcPercent}%`}} />
+          </div>
+          <div className="incident-cards">
+            <div className="incident-card mvc"><span className="incident-card-label">MVC</span><span className="incident-card-count">{incidentComposition.mvcCount.toLocaleString()}</span><span className="incident-card-meta">Count <span>Percentage <strong>{valueLabel(incidentComposition.mvcPercent)}%</strong></span></span></div>
+            <div className="incident-card nonmvc"><span className="incident-card-label">Non-MVC</span><span className="incident-card-count">{incidentComposition.nonMvcCount.toLocaleString()}</span><span className="incident-card-meta">Count <span>Percentage <strong>{valueLabel(incidentComposition.nonMvcPercent)}%</strong></span></span></div>
+          </div>
+          <div className="incident-total"><span>Total</span><strong>{incidentComposition.totalCount.toLocaleString()}</strong><span>100.00%</span></div>
         </div>
 
       ) : <p className="small">Incident composition is not available.</p>}
@@ -3032,13 +3051,13 @@ function AnalysisPanel({
 
   const [showTravel, setShowTravel] = useState(true);
 
-  const [showChange, setShowChange] = useState(false);
 
   const [showCapacity, setShowCapacity] = useState(false);
 
   const [showPaths, setShowPaths] = useState(false);
   const [showEntropy, setShowEntropy] = useState(false);
   const [showCoverage, setShowCoverage] = useState(false);
+  const [showTraining, setShowTraining] = useState(false);
 
   const [showStation, setShowStation] = useState(false);
 
@@ -3048,13 +3067,13 @@ function AnalysisPanel({
 
     setShowTravel(true);
 
-    setShowChange(false);
 
     setShowCapacity(false);
 
     setShowPaths(false);
 
     setShowStation(false);
+    setShowTraining(false);
 
   }, [workspace]);
 
@@ -3122,13 +3141,13 @@ function AnalysisPanel({
 
         <label className="analysis-toggle"><input type="checkbox" checked={showStation} onChange={(e) => setShowStation(e.target.checked)} /><span className="toggle-icon">S</span><span>Station analysis</span></label>
 
-        <label className="analysis-toggle"><input type="checkbox" checked={showCapacity} onChange={(e) => setShowCapacity(e.target.checked)} /><span className="toggle-icon">%</span><span>Median utilization (% of upper allowance)</span></label>
 
-        <label className="analysis-toggle"><input type="checkbox" checked={showChange} onChange={(e) => setShowChange(e.target.checked)} /><span className="toggle-icon">M</span><span>MVC travel time change by station</span></label>
 
         <label className="analysis-toggle"><input type="checkbox" checked={showPaths} onChange={(e) => setShowPaths(e.target.checked)} /><span className="toggle-icon">P</span><span>Network weighted average MVC paths</span></label>
         <label className="analysis-toggle"><input type="checkbox" checked={showEntropy} onChange={(e) => setShowEntropy(e.target.checked)} /><span className="toggle-icon">H</span><span>MVC path entropy</span></label>
         <label className="analysis-toggle"><input type="checkbox" checked={showCoverage} onChange={(e) => setShowCoverage(e.target.checked)} /><span className="toggle-icon">C</span><span>Weighted travel-time coverage</span></label>
+        {workspace === "ml" && <label className="analysis-toggle"><input type="checkbox" checked={showTraining} onChange={(e) => setShowTraining(e.target.checked)} /><span className="toggle-icon">ML</span><span>ML training and independent temporal test</span></label>}
+        <label className="analysis-toggle"><input type="checkbox" checked={showCapacity} onChange={(e) => setShowCapacity(e.target.checked)} /><span className="toggle-icon">%</span><span>Median utilization (% of upper allowance)</span></label>
 
       </div>
 
@@ -3136,7 +3155,6 @@ function AnalysisPanel({
 
       {showTravel && tabData && <TravelTimeChart rows={tabData.travelTime} />}
 
-      {showChange && tabData && <StationChangeChart rows={tabData.stationChange ?? []} />}
 
       {showCapacity && tabData && <ScenarioBarChart rows={tabData.scenarioSummary ?? []} metric="medianCapacityUsedPercent" title="Median utilization (% of upper allowance)" unit="%" colorClass="slate" />}
 
@@ -3148,40 +3166,35 @@ function AnalysisPanel({
 
       {showStation && tabData && <StationAnalysisChart rows={tabData.stationAnalysis} />}
 
-      <p className="chart-note">Final travel times need not improve when the path limit increases: the hierarchical model allows concessions in MVC travel time and path accessibility while optimizing later objectives.</p>
+      {showTravel && <p className="chart-note">More candidate paths may slightly increase travel time because the model permits limited objective trade-offs.</p>}
 
-      <p className="chart-note">Capacity utilization is measured against the upper allowance. Historical capacity represents service workload, including zero-incident allocations; ML capacity represents combined territory area.</p>
+      {showCapacity && <p className="chart-note">Utilization is measured against the upper allowance for {workspace === "historical" ? "service workload" : "combined territory area"}.</p>}
 
       {showEntropy && <div className="chart-block">
         <h3>MVC path entropy — all scenarios</h3>
         {(workspace === "historical" ? ["Historical"] : ["RF", "XGB"]).map(variant => <div className="diagnostic-scenario-group" key={variant}>
           <h4>{workspace === "historical" ? "Model 01" : `Model 02 · ${variant}`}</h4>
-          <div className="change-table"><table><thead><tr><th>Scenario</th><th>Stations</th><th>Median</th><th>Mean</th><th>Minimum</th></tr></thead>
-            <tbody>{(data?.entropy ?? []).filter(r => r.Variant === variant).map(r => <tr key={`${variant}-${r.Scenario}`}><td>{r.Scenario}</td><td>{r.Stations_With_Valid_Entropy}</td><td>{r.Median_Normalized_Shannon_Entropy.toFixed(2)}</td><td>{r.Mean_Normalized_Shannon_Entropy.toFixed(2)}</td><td>{r.Minimum_Normalized_Shannon_Entropy.toFixed(2)}</td></tr>)}</tbody>
+          <div className="change-table diagnostic-matrix"><table><thead><tr><th>Scenario</th><th>Stations</th><th>Median</th><th>Mean</th><th>Minimum</th></tr></thead>
+            <tbody>{(data?.entropy ?? []).filter(r => r.Variant === variant).map(r => <tr key={`${variant}-${r.Scenario}`}><td>{r.Scenario}</td><td>{r.Stations_With_Valid_Entropy}</td><td style={{backgroundColor:`rgba(13,148,136,${.04+r.Median_Normalized_Shannon_Entropy*.15})`}}>{r.Median_Normalized_Shannon_Entropy.toFixed(2)}</td><td style={{backgroundColor:`rgba(13,148,136,${.04+r.Mean_Normalized_Shannon_Entropy*.15})`}}>{r.Mean_Normalized_Shannon_Entropy.toFixed(2)}</td><td style={{backgroundColor:`rgba(13,148,136,${.04+r.Minimum_Normalized_Shannon_Entropy*.15})`}}>{r.Minimum_Normalized_Shannon_Entropy.toFixed(2)}</td></tr>)}</tbody>
           </table></div>
         </div>)}
         <p className="chart-note">Entropy describes the distribution of path counts across assigned MVC grids, including zero-path grids. Higher values indicate a more even distribution, rather than more paths.</p>
       </div>}
       {showCoverage && <div className="chart-block">
         <h3>Weighted travel-time coverage — all scenarios</h3>
-        {(workspace === "historical" ? ["Historical"] : ["RF", "XGB"]).flatMap(variant => ["MVC", "Non-MVC"].map(dataset => <div className="diagnostic-scenario-group" key={`${variant}-${dataset}`}>
-          <h4>{workspace === "historical" ? "Model 01" : `Model 02 · ${variant}`} · {dataset}</h4>
-          <div className="change-table"><table><thead><tr><th>Scenario</th>{[120,180,240,300,360].map(t => <th key={t}>≤{t} sec</th>)}</tr></thead>
-            <tbody>{(data?.coverage ?? []).filter(r => r.Variant === variant && r.Dataset === dataset).map(r => <tr key={`${variant}-${dataset}-${r.Scenario}`}><td>{r.Scenario}</td>{r.Coverage.map((v,i) => <td key={i}>{(100*v).toFixed(2)}%</td>)}</tr>)}</tbody>
-          </table></div>
-        </div>))}
+        {(workspace === "historical" ? ["Historical"] : ["RF", "XGB"]).flatMap(variant => ["MVC", "Non-MVC"].map(dataset => <CoverageLineChart key={`${variant}-${dataset}`} title={`${workspace === "historical" ? "Model 01" : `Model 02 · ${variant}`} · ${dataset}`} rows={(data?.coverage ?? []).filter(row=>row.Variant===variant && row.Dataset===dataset)} />))}
         <p className="chart-note">Historical demand is weighted by incident severity; ML demand by predicted risk. Each scenario is compared with its corresponding baseline.</p>
       </div>}
 
-      {workspace === "ml" && <details className="station-scenario">
+      {workspace === "ml" && showTraining && <div className="chart-block">
 
-        <summary>ML training and independent temporal test</summary>
+        <h3>ML training and independent temporal test</h3>
 
-        <p className="small">Chronological periods contain 60%, 20%, and 20% of incident records. Four A predictors are fitted against B incident intensity. Three buffered spatial folds select among four configurations per model using mean RMSE. A predictors remain fixed for scoring against C; C is excluded from tuning and bias correction. Later-period response time and severity are not predictors.</p>
+
 
         <div className="change-table"><table><thead><tr><th>Dataset</th><th>Model</th><th>R²</th><th>RMSE</th><th>MAE</th><th>Pearson r</th></tr></thead><tbody>{(data?.testPerformance ?? []).map(r => <tr key={`${r.Dataset}-${r.Model}`}><td>{r.Dataset}</td><td>{r.Model}</td><td>{r.R2.toFixed(2)}</td><td>{r.RMSE.toFixed(2)}</td><td>{r.MAE.toFixed(2)}</td><td>{r["Pearson r"].toFixed(2)}</td></tr>)}</tbody></table></div>
 
-      </details>}
+      </div>}
 
     </div>
 
