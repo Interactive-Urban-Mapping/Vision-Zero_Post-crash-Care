@@ -2,7 +2,7 @@
 
 import maplibregl, { Map } from "maplibre-gl";
 
-import { ManualAllocationGeoJSON, ManualAllocationResult, runManualAllocation } from "./manualOptimizer";
+import type { ManualAllocationGeoJSON, ManualAllocationResult } from "./manualOptimizer";
 
 type Workspace = "context" | "historical" | "ml" | "manual";
 
@@ -75,26 +75,6 @@ type GeoJsonCollection = {
   type: "FeatureCollection";
 
   features: GeoJsonFeature[];
-
-};
-
-type ManualResponse = {
-
-  summary: {
-
-    assigned_demand_records: number;
-
-    unassigned_demand_records: number;
-
-    metrics: Record<string, number | null>;
-
-    notes: string[];
-
-  };
-
-  assignments: Array<Record<string, string | number | null>>;
-
-  station_summary: Array<Record<string, string | number>>;
 
 };
 
@@ -428,13 +408,13 @@ function scenarioModelDescription(workspace: Workspace) {
 
   if (workspace === "historical") {
 
-    return "Four scenarios use workload bands of 0.90–1.10 or 0.80–1.20 and limits of 250 or 500 candidate MVC paths within 240 seconds. Travel times are severity weighted. The configured MIP gap is 0.05%; higher-priority objectives allow 2% concessions.";
+    return "Compare workload bands of 90–110% or 80–120%, with up to 250 or 500 MVC paths within 240 seconds. Travel times are severity weighted.";
 
   }
 
   if (workspace === "ml") {
 
-    return "Four scenarios use territory area bands of 0.90–1.10 or 0.80–1.20 and limits of 250 or 500 candidate MVC paths within 240 seconds. Travel times and path averages are predicted demand weighted. The configured MIP gap is 0.05%; higher-priority objectives allow 2% concessions.";
+    return "Compare territory area bands of 90–110% or 80–120%, with up to 250 or 500 MVC paths within 240 seconds. Travel times and path averages are weighted by predicted demand.";
 
   }
 
@@ -2002,19 +1982,28 @@ function AttributeTable({ layer, isOpen, onClose }: { layer: LayerDefinition | n
 
     if (!isOpen || !layer) return;
 
-    fetch(layer.url)
+    const controller = new AbortController();
 
-      .then((response) => response.json())
+    setFeatures([]);
+
+    fetch(layer.url, { signal: controller.signal })
+
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load layer attributes.");
+        return response.json();
+      })
 
       .then((geojson: GeoJsonCollection) => {
 
         const nextFeatures = geojson.features ?? [];
 
-        setFeatures(layer.id === "fire_stations" ? nextFeatures.filter((feature) => !isFireStationZero(feature.properties ?? {})) : nextFeatures);
+        if (!controller.signal.aborted) setFeatures(layer.id === "fire_stations" ? nextFeatures.filter((feature) => !isFireStationZero(feature.properties ?? {})) : nextFeatures);
 
       })
 
-      .catch(() => setFeatures([]));
+      .catch(() => { if (!controller.signal.aborted) setFeatures([]); });
+
+    return () => controller.abort();
 
   }, [isOpen, layer]);
 
@@ -3031,8 +3020,6 @@ function AnalysisPanel({
 
   manualRows,
 
-  manualNotes,
-
   manualResult,
 
 }: {
@@ -3042,8 +3029,6 @@ function AnalysisPanel({
   data: AnalysisData | null;
 
   manualRows: TravelTimeRow[];
-
-  manualNotes: string[];
 
   manualResult: ManualAllocationResult | null;
 
@@ -3104,8 +3089,6 @@ function AnalysisPanel({
         <ManualScenarioSummary result={manualResult} />
 
         <ManualStationAnalysisChart result={manualResult} />
-
-        {manualNotes.map((note) => <p className="small" key={note}>{note}</p>)}
 
       </div>
 
@@ -3215,8 +3198,6 @@ export function App() {
   const [workspace, setWorkspace] = useState<Workspace>("context");
 
   const [attributeLayerId, setAttributeLayerId] = useState<string | null>(null);
-
-  const [result, setResult] = useState<ManualResponse | null>(null);
 
   const [manualResult, setManualResult] = useState<ManualAllocationResult | null>(null);
 
@@ -3356,6 +3337,8 @@ export function App() {
 
     setManualError(null);
 
+    setManualStage("Loading scenario solver");
+
     setIsRunning(true);
 
     const controller = new AbortController();
@@ -3364,9 +3347,11 @@ export function App() {
 
     try {
 
-      setManualResult(await runManualAllocation(weights, manualSettings, controller.signal, setManualStage));
+      const { runManualAllocation } = await import("./manualOptimizer");
 
-      setResult(null);
+      if (controller.signal.aborted) return;
+
+      setManualResult(await runManualAllocation(weights, manualSettings, controller.signal, setManualStage));
 
     } catch (error) {
 
@@ -3390,13 +3375,13 @@ export function App() {
 
         <div>
 
-          <p className="eyebrow">MapLibre Vision Zero Emergency Response Decision-Support Tool</p>
+          <p className="eyebrow">Vision Zero Emergency Response Decision-Support Tool</p>
 
           <h1>{study?.label ?? "Vision Zero Mapper"}</h1>
 
         </div>
 
-        <span className="status">{layers.length > 0 ? `${layers.length} layers ready` : "Run layer export"}</span>
+        <span className="status">{layers.length > 0 ? "Ready" : "Loading map layers…"}</span>
 
       </header>
 
@@ -3578,7 +3563,7 @@ export function App() {
 
               {manualError && <p className="small warning" role="alert">{manualError}</p>}
 
-              <p className="small">16 candidate stations per grid. Approximate search with a 20-second limit per stage.</p>
+              <p className="small">Explore an approximate allocation using your weights and workload limits.</p>
 
             </>
 
@@ -3592,7 +3577,7 @@ export function App() {
 
         <aside className="results">
 
-          <AnalysisPanel workspace={workspace} data={analysis} manualRows={manualTravelRows} manualNotes={manualResult?.notes ?? []} manualResult={manualResult} />
+          <AnalysisPanel workspace={workspace} data={analysis} manualRows={manualTravelRows} manualResult={manualResult} />
 
         </aside>
 

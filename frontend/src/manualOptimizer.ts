@@ -108,7 +108,12 @@ export async function solveManualInputs(inputs: ManualInputs, geometry: ManualAl
   const selected = select(decisions,result);
   const expected = inputs.mvcDemandStats.length+inputs.nonMvcDemandStats.length;
   if (selected.length!==expected || new Set(selected.map(d=>key(d.category,d.grid))).size!==expected) throw new Error("Solver returned incomplete or duplicate assignments.");
-  const consumed = (category: string, station: string) => total(selected.filter(d=>d.category===category && d.station===station).map(d=>d.workload));
+  const workloadByStation = new Map<string, number>();
+  for (const d of selected) {
+    const stationKey = key(d.category, d.station);
+    workloadByStation.set(stationKey, (workloadByStation.get(stationKey) ?? 0) + d.workload);
+  }
+  const consumed = (category: string, station: string) => workloadByStation.get(key(category, station)) ?? 0;
   for (const [category,lower,upper] of [["MVC",settings.mvcLower,settings.mvcUpper],["Non-MVC",settings.nonMvcLower,settings.nonMvcUpper]] as const) for (const [station,base] of capacities[category]) {
     const value=consumed(category,station), tolerance=Math.max(0.01,base*1e-7);
     if (value<base*lower-tolerance || value>base*upper+tolerance) throw new Error(`Workload upper-limit verification failed for ${category} station ${station}.`);
@@ -128,26 +133,34 @@ export async function solveManualInputs(inputs: ManualInputs, geometry: ManualAl
       const d:Decision={variable:`z_${zero.length}`,category:"Zero-Incident Territory",grid,station,count:0,workload:inputs.zeroWorkloadSec,service:inputs.zeroWorkloadSec,severityWeight:0,time,paths:0,coefficient:time};
       zero.push(d); vars.push({name:d.variable,coef:1});
     }
-    if (!vars.length) throw new Error(`Zero-incident grid ${grid} has no station with enough residual capacity. Widen the upper upper limits.`);
+    if (!vars.length) throw new Error(`Zero-incident grid ${grid} has no station with enough residual capacity. Widen the upper limits.`);
     zeroConstraints.push({name:`zero_assign_${grid}`,vars,bnds:{type:glpk.GLP_FX,lb:1,ub:1}});
   }
+  const zeroByStation = new Map<string, Decision[]>();
+  for (const d of zero) {
+    const stationDecisions = zeroByStation.get(d.station) ?? [];
+    stationDecisions.push(d);
+    zeroByStation.set(d.station, stationDecisions);
+  }
   for (const station of stations) {
-    const ds=zero.filter(d=>d.station===station);
+    const ds=zeroByStation.get(station) ?? [];
     if (ds.length)zeroConstraints.push({name:`zero_capacity_${station}`,vars:ds.map(d=>({name:d.variable,coef:1})),bnds:{type:glpk.GLP_UP,lb:0,ub:Math.floor((Math.max(0,residual.get(station)??0)+0.001)/inputs.zeroWorkloadSec)}});
   }
   onProgress?.("Allocating zero-incident grids");
   let zeroResult:any=null; let zeroSelected:Decision[]=[];
   if (zero.length) {const zeroLP=makeLP("Residual_Zero_Incident_Allocation",zero,zeroConstraints); zeroLP.binaries=[]; zeroResult=await glpk.solve(zeroLP,options);feasible(zeroResult,"Zero-incident territory");zeroSelected=select(zero,zeroResult);}
   if (zeroSelected.length!==zeroGridIds.size)throw new Error("Zero-incident territory assignment is incomplete.");
-  for (const station of stations) if (total(zeroSelected.filter(d=>d.station===station).map(d=>d.workload))>(residual.get(station)??0)+0.01)throw new Error("Residual capacity verification failed.");
+  const zeroWorkloadByStation = new Map<string, number>();
+  for (const d of zeroSelected) zeroWorkloadByStation.set(d.station, (zeroWorkloadByStation.get(d.station) ?? 0) + d.workload);
+  for (const station of stations) if ((zeroWorkloadByStation.get(station) ?? 0)>(residual.get(station)??0)+0.01)throw new Error("Residual capacity verification failed.");
   onProgress?.("Checking capacities and preparing results");
   const props=(d:Decision)=>({Demand_Type:d.category,Allocation_Basis:d.category==="Zero-Incident Territory"?"Residual capacity post-solve":"Custom severity-weighted historical allocation",Grid_ID:d.grid,Allocated_Station:d.station,Unique_Incidents:d.count,Severity_Weight:d.severityWeight,Demand_Equivalent:d.count,Average_Service_Time_sec:d.service,Allocated_Service_Workload_sec:d.workload,FreeFlow_Time_sec:d.time,Total_FreeFlow_Time_sec:d.count*d.time,Total_SeverityWeighted_FreeFlow_Time_sec:d.severityWeight*d.time,Effective_Path_Count_Under240:d.category==="MVC"?d.paths:null,Total_IncidentWeighted_Path_Count:d.count*d.paths});
   const geo=(ds:Decision[]):ManualAllocationGeoJSON=>{const byGrid=new Map(ds.map(d=>[d.grid,d]));return {type:"FeatureCollection",features:geometry.features.flatMap(f=>{const d=byGrid.get(String(f.properties.GRID_ID??f.properties.Grid_ID));return d?[{...f,properties:{...f.properties,...props(d)}}]:[];})};};
   const mvc=selected.filter(d=>d.category==="MVC"),non=selected.filter(d=>d.category==="Non-MVC");
   const travel=(ds:Decision[])=>{const w=total(ds.map(d=>d.severityWeight));return w?total(ds.map(d=>d.severityWeight*d.time))/w:null;};
-  const capacitySummary=[...stations].sort((x,y)=>Number(x)-Number(y)).map(station=>{const mvcWorkload=consumed("MVC",station),nonMvcHistoricalWorkload=consumed("Non-MVC",station),zeroWorkload=total(zeroSelected.filter(d=>d.station===station).map(d=>d.workload));return {station,mvcWorkload,nonMvcHistoricalWorkload,zeroWorkload,mvcBaseline:capacities.MVC.get(station)??0,nonMvcBaseline:capacities["Non-MVC"].get(station)??0,mvcCapacity:(capacities.MVC.get(station)??0)*settings.mvcUpper,nonMvcCapacity:(capacities["Non-MVC"].get(station)??0)*settings.nonMvcUpper};});
+  const capacitySummary=[...stations].sort((x,y)=>Number(x)-Number(y)).map(station=>{const mvcWorkload=consumed("MVC",station),nonMvcHistoricalWorkload=consumed("Non-MVC",station),zeroWorkload=zeroWorkloadByStation.get(station) ?? 0;return {station,mvcWorkload,nonMvcHistoricalWorkload,zeroWorkload,mvcBaseline:capacities.MVC.get(station)??0,nonMvcBaseline:capacities["Non-MVC"].get(station)??0,mvcCapacity:(capacities.MVC.get(station)??0)*settings.mvcUpper,nonMvcCapacity:(capacities["Non-MVC"].get(station)??0)*settings.nonMvcUpper};});
   const scenario=`Custom: MVC up to ${100*settings.mvcUpper}%; non-MVC up to ${100*settings.nonMvcUpper}%; Max${settings.maxPaths}`;
-  return {mvcGeojson:geo(mvc),nonMvcGeojson:geo([...non,...zeroSelected]),travelTime:[{scenario,mvc:travel(mvc),remaining:travel(non),overall:travel(selected)}],assignedGrids:selected.length+zeroSelected.length,notes:["Fast solve with a 2% gap target, using the 16 best candidate stations per grid and a 20-second search limit per stage."],diagnostics:{weights,capacityScenario:settings,normalizationDenominators:denominators,solver:{name:"glpk.js",method:"candidate shortlist",approximate:true,candidateLimits:[16],heuristicFallback:!!(mvcResult.heuristicFallback || nonResult.heuristicFallback),searchLimitReached:!!(mvcResult.searchLimitReached || nonResult.searchLimitReached),stageSeconds:{mvc:mvcResult.elapsedSeconds,nonMvc:nonResult.elapsedSeconds},timeLimitPerSolveSec:20,mipGap:GAP,status:result.result.status,objective:result.result.z,zeroStatus:zeroResult?.result?.status??null},capacitySummary,allocationCounts:{mvc:mvc.length,nonMvcHistorical:non.length,zeroTerritory:zeroSelected.length,totalMapped:selected.length+zeroSelected.length}}};
+  return {mvcGeojson:geo(mvc),nonMvcGeojson:geo([...non,...zeroSelected]),travelTime:[{scenario,mvc:travel(mvc),remaining:travel(non),overall:travel(selected)}],assignedGrids:selected.length+zeroSelected.length,notes:["Approximate allocation; workload limits are checked before results are shown."],diagnostics:{weights,capacityScenario:settings,normalizationDenominators:denominators,solver:{name:"glpk.js",method:"candidate shortlist",approximate:true,candidateLimits:[16],heuristicFallback:!!(mvcResult.heuristicFallback || nonResult.heuristicFallback),searchLimitReached:!!(mvcResult.searchLimitReached || nonResult.searchLimitReached),stageSeconds:{mvc:mvcResult.elapsedSeconds,nonMvc:nonResult.elapsedSeconds},timeLimitPerSolveSec:20,mipGap:GAP,status:result.result.status,objective:result.result.z,zeroStatus:zeroResult?.result?.status??null},capacitySummary,allocationCounts:{mvc:mvc.length,nonMvcHistorical:non.length,zeroTerritory:zeroSelected.length,totalMapped:selected.length+zeroSelected.length}}};
   } finally {
     if (!solver) glpk.terminate();
   }
