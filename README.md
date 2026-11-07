@@ -28,7 +28,7 @@ The app runs in the browser using React and MapLibre. It loads the included map 
 
 ## Run locally
 
-Requirements: Node.js 20 or newer and npm. When cloning the repository, install Git LFS and run `git lfs pull` from the repository root to download the map assets.
+Requirements: Node.js 24 or newer and npm. When cloning the repository, install Git LFS and run `git lfs pull` from the repository root to download the map assets.
 
 ```powershell
 cd frontend
