@@ -12,13 +12,23 @@ Users can inspect existing incident and response conditions, compare historical 
 
 *Historical allocation workspace showing the Scenario 3 MVC allocation map and scenario analysis controls.*
 
-## Main app source
+## How it works
 
-`frontend` is the maintained source for both local use and deployment.
+Choose an incident type and an allocation scenario to display its map layers. Use the scenario analysis controls to compare station workloads, travel times, accessibility, and coverage. The manual solver lets you adjust objective weights and workload limits to explore alternative allocations.
+
+The app runs in the browser using React and MapLibre. It loads the included map layers and analysis inputs; the manual allocation solver also runs in the browser.
+
+## Repository contents
+
+- `frontend/src`: app interface, map controls, charts, and manual solver.
+- `frontend/public/layers`: map layers, scenario results, and solver inputs.
+- `docs`: supporting documentation and images.
+- `data/Original Data`: source-data reference.
+- `.github/workflows`: GitHub Pages build and deployment workflow.
 
 ## Run locally
 
-Requirements: Node.js 20 or newer and npm.
+Requirements: Node.js 20 or newer and npm. When cloning the repository, install Git LFS and run `git lfs pull` from the repository root to download the map assets.
 
 ```powershell
 cd frontend
@@ -28,15 +38,6 @@ npm run dev
 
 Open the local address printed by Vite. The browser-ready layers are included under `frontend/public/layers`, so no data-preparation step is required.
 
-## Public repository scope
-
-This repository is intentionally limited to the material required to build, understand, and display the public webmap:
-
-- React, Vite, MapLibre, and browser-based optimization source code
-- Browser-ready GeoJSON, raster, analysis, and manual-allocation inputs
-- Data-source, licensing, and study documentation
-- The retained `data/Original Data` source reference
-
 ## Build for deployment
 
 ```powershell
@@ -45,7 +46,7 @@ npm ci
 npm run build
 ```
 
-The production website is generated in `frontend/dist`. The GitHub Actions workflow publishes only that directory, keeping the deployed site well below GitHub Pages' 1 GB site limit.
+The production website is generated in `frontend/dist`. The GitHub Actions workflow publishes that directory.
 
 ## Data attribution
 
