@@ -805,7 +805,11 @@ function popupHtml(layerId: string, properties: Record<string, unknown>) {
 
       ["Baseline MVC travel time", "Baseline_MVC_Avg_sec"],
 
-      ["S3 MVC travel time", "S3_MVC_Avg_sec"],
+      ["Scenario", "Scenario"],
+
+      ["Model variant", "Variant"],
+
+      ["Scenario MVC travel time", "Scenario_MVC_Avg_sec"],
 
       ["Improvement (seconds)", "Improvement_sec"],
 

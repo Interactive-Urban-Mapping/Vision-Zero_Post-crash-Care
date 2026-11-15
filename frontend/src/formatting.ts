@@ -63,7 +63,7 @@ export function attributeLabel(key: string) {
 
     Effective_Path_Count_Under240: "MVC paths within 240 sec", Average_Effective_Path_Count_Under240: "Weighted average MVC paths",
 
-    Average_Paths_Weighting: "Path weighting", Baseline_MVC_Avg_sec: "Baseline MVC travel time (sec)", S3_MVC_Avg_sec: "S3 MVC travel time (sec)",
+    Average_Paths_Weighting: "Path weighting", Baseline_MVC_Avg_sec: "Baseline MVC travel time (sec)", Scenario_MVC_Avg_sec: "Scenario MVC travel time (sec)",
 
     Improvement_sec: "Improvement (sec)", Improvement_pct: "Improvement (%)", Abs_Change: "Absolute change (sec)",
 
