@@ -352,3 +352,14 @@ nav button, .controls > h2, .controls > .eyebrow, .layer-group-title,
 .station-heading-nonmvc { color: #077a91; }
 .station-heading-capacity { color: #40576a; }
 .station-heading-paths { color: #168047; }
+
+/* Data recovery and custom allocation guidance. */
+.status-error { background: #fff1e6; color: #8a3c12; }
+.load-feedback { padding: .8rem; margin-bottom: .8rem; border: 1px solid #e4b89c; border-radius: .5rem; background: #fff7f0; color: #713b20; font-size: .85rem; }
+.load-feedback p { margin-bottom: .6rem; }
+.load-feedback button, .restore-defaults { border: 1px solid #aebfc9; border-radius: .4rem; padding: .45rem .7rem; background: #fff; color: #254555; cursor: pointer; }
+.restore-defaults { margin-bottom: .8rem; }
+.restore-defaults:disabled { opacity: .5; cursor: default; }
+.weight-total { padding: .6rem; border-radius: .4rem; background: #fff4e8; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.weight-total.valid { color: #245d36; background: #e9f3ec; }
+.load-feedback button:focus-visible, .restore-defaults:focus-visible { outline: 2px solid #098594; outline-offset: 3px; }

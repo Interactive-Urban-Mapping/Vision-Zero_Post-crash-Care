@@ -1,228 +1,15 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import type { Workspace, BasemapMode, Study, LayerDefinition, TravelTimeRow, ContextInfoData, AnalysisData } from "./types";
+import { isStationZeroLabel, isFireStationZero, stationSortValue, averageNumbers, numericValue, manualWeightedAverage, attributeLabel, displayAttribute, displayLabel } from "./formatting";
+import { AttributeTable } from "./components/AttributeTable";
+import { valueLabel, CoverageLineChart, TravelTimeChart, StationAnalysisChart, ManualScenarioSummary, ManualStationAnalysisChart, ScenarioBarChart, ExistingMetricLineChart } from "./components/Charts";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import maplibregl, { Map } from "maplibre-gl";
 
 import type { ManualAllocationGeoJSON, ManualAllocationResult } from "./manualOptimizer";
 
-type Workspace = "context" | "historical" | "ml" | "manual";
-
-type BasemapMode = "osm" | "3d";
-
-type Study = { id: string; label: string; map_center: [number, number]; default_zoom: number };
-
-type LayerDefinition = {
-
-  id: string;
-
-  label: string;
-
-  kind: "fill" | "line" | "circle" | "raster";
-
-  url: string;
-
-  color?: string;
-
-  colorBy?: string;
-
-  colorMap?: Record<string, string>;
-
-  colorRampBy?: string;
-
-  sizeBy?: string;
-
-  coordinates?: [[number, number], [number, number], [number, number], [number, number]];
-
-  legend?:
-
-    | { type: "ramp"; min: number; max: number; colors: string[]; stretch?: string }
-
-    | { type: "quantile"; breaks: number[]; colors: string[]; labels: string[] };
-
-  workspace?: Workspace;
-
-  scenario?: string;
-
-  scenarioTitle?: string;
-
-  layerGroup?: string;
-
-  groupLabel?: string;
-
-  lineColor?: string;
-
-  lineOpacity?: number;
-
-  lineWidth?: number;
-
-  opacity: number;
-
-  featureCount: number;
-
-};
-
-type GeoJsonFeature = {
-
-  type: "Feature";
-
-  geometry: unknown;
-
-  properties: Record<string, string | number | null>;
-
-};
-
-type GeoJsonCollection = {
-
-  type: "FeatureCollection";
-
-  features: GeoJsonFeature[];
-
-};
-
-type TravelTimeRow = {
-
-  scenario: string;
-
-  mvc?: number | null;
-
-  remaining?: number | null;
-
-  overall?: number | null;
-
-};
-
-type StationAnalysisRow = {
-
-  scenario: string;
-
-  station: string;
-
-  mvcTravel?: number | null;
-
-  remainingTravel?: number | null;
-
-  capacityUsedPercent?: number | null;
-
-  mvcEffectivePaths?: number | null;
-
-};
-
-type ScenarioSummaryRow = {
-
-  scenario: string;
-
-  medianCapacityUsedPercent?: number | null;
-
-  medianBaselineAllocationPercent?: number | null;
-
-  medianStationWeightedPaths?: number | null;
-
-  averageMvcEffectivePaths?: number | null;
-
-};
-
-type StationChangeRow = {
-
-  scenario: string;
-
-  station: string;
-
-  averageChangeSec?: number | null;
-
-  averageBaselineSec?: number | null;
-
-  averageOptimizedSec?: number | null;
-
-  weight?: number | null;
-
-  gridCount?: number | null;
-
-  improvedGridCount?: number | null;
-
-  worsenedGridCount?: number | null;
-
-  source?: string | null;
-
-};
-
-type ContextInfoData = {
-
-  manualBaselineTravelTime?: TravelTimeRow;
-
-  incidentComposition?: {
-
-    mvcCount: number;
-
-    nonMvcCount: number;
-
-    totalCount: number;
-
-    mvcPercent?: number | null;
-
-    nonMvcPercent?: number | null;
-
-  };
-
-  existingTravelTime?: {
-
-    mvc?: number | null;
-
-    remaining?: number | null;
-
-    overall?: number | null;
-
-  };
-
-  existingResponseTime?: {
-
-    mvc?: number | null;
-
-    remaining?: number | null;
-
-    overall?: number | null;
-
-  };
-
-  stationExistingFreeFlow?: Array<{
-
-    station: string;
-
-    averageExistingFreeFlowTimeSec?: number | null;
-
-  }>;
-
-  stationExistingResponse?: Array<{
-
-    station: string;
-
-    category: string;
-
-    averageResponseTimeSecGridBased?: number | null;
-
-  }>;
-
-};
-
-type TestPerformance = { Dataset: string; Model: string; R2: number; RMSE: number; MAE: number; "Pearson r": number };
-
-type CoverageRow = { Variant: string; Dataset: string; Model: string; Scenario: string; Coverage: number[] };
-
-type EntropyRow = { Model: string; Variant: string; Scenario: string; Stations_With_Valid_Entropy: number; Median_Normalized_Shannon_Entropy: number; Mean_Normalized_Shannon_Entropy: number; Minimum_Normalized_Shannon_Entropy: number };
-
-type AnalysisData = {
-
-  testPerformance?: TestPerformance[];
-
-  coverage?: CoverageRow[];
-
-  entropy?: EntropyRow[];
-
-  context?: ContextInfoData;
-
-  historical: { travelTime: TravelTimeRow[]; stationAnalysis: StationAnalysisRow[]; scenarioSummary: ScenarioSummaryRow[]; stationChange?: StationChangeRow[] };
-
-  ml: { travelTime: TravelTimeRow[]; stationAnalysis: StationAnalysisRow[]; scenarioSummary: ScenarioSummaryRow[]; stationChange?: StationChangeRow[] };
-
-};
+const DEFAULT_WEIGHTS = { mvcTime: 0.60, mvcPaths: 0.20, nonMvcTime: 0.20 };
+const DEFAULT_MANUAL_SETTINGS = { mvcLower: 0, mvcUpper: 1.3, nonMvcLower: 0, nonMvcUpper: 1.3, maxPaths: 250 as 250 | 500 };
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 
@@ -292,7 +79,7 @@ const workspaceCopy: Record<Workspace, { title: string; description: string }> =
 
     title: "Model 01: Historical Allocation",
 
-    description: "Historical incident allocation with separate MVC and non-MVC workload capacity bands",
+    description: "Historical incident allocation with separate MVC and Non-MVC workload capacity bands",
 
   },
 
@@ -458,25 +245,11 @@ function groupedLayerRows(layers: LayerDefinition[]) {
 
     grouped.add(layer.layerGroup);
 
-    rows.push({ type: "group", title: layer.layerGroup, layers: layers.filter((item) => item.layerGroup === layer.layerGroup) });
+    rows.push({ type: "group", title: displayLabel(layer.layerGroup), layers: layers.filter((item) => item.layerGroup === layer.layerGroup) });
 
   });
 
   return rows;
-
-}
-
-function isStationZeroLabel(value: string) {
-
-  const normalized = value.trim().toLowerCase();
-
-  return normalized === "0" || normalized === "0.0" || normalized === "station 0";
-
-}
-
-function isFireStationZero(properties: Record<string, unknown>) {
-
-  return isStationZeroLabel(String(properties.STATION10 ?? ""));
 
 }
 
@@ -792,14 +565,6 @@ function clickableLayerIds(map: Map, layers: LayerDefinition[], visibleLayers: R
 
 }
 
-function stationSortValue(value: string) {
-
-  const numeric = Number(value);
-
-  return Number.isFinite(numeric) ? numeric : value;
-
-}
-
 function manualStationColors(result: ManualAllocationResult | null) {
 
   if (!result) return {};
@@ -845,20 +610,6 @@ function geometryPolygons(geometry: unknown) {
   if (item.type === "MultiPolygon") return item.coordinates ?? [];
 
   return [];
-
-}
-
-function averageNumbers(values: number[]) {
-
-  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
-
-}
-
-function numericValue(value: unknown) {
-
-  const numberValue = Number(value);
-
-  return Number.isFinite(numberValue) ? numberValue : null;
 
 }
 
@@ -985,62 +736,6 @@ function dissolveManualAllocation(collection: ManualAllocationResult["mvcGeojson
       })),
 
   };
-
-}
-
-function attributeLabel(key: string) {
-
-  const labels: Record<string,string> = {
-
-    WARD_NA13: "Ward", TYPE_DE14: "Facility type", LINEAR_30: "Street name", FEATURE36: "Street feature", OBJECTID_1: "Record ID",
-    Predicted_Demand_Weight_SUM: "Predicted demand weight", Effective_Path_Count_Under240_Max250: "MVC paths within 240 sec (250 candidates)", Effective_Path_Count_Under240_Max500: "MVC paths within 240 sec (500 candidates)",
-    GRID_ID: "Grid ID", Grid_ID: "Grid ID", OBJECTID: "Record ID", FID: "Feature ID",
-
-    Station_ID: "Station ID", STATION10: "Station ID", ADDRESS5: "Address", YEAR_BU11: "Year built", RUN_AREA: "Service area ID",
-
-    INCIDENT_N: "Incident ID", Final_Inci: "Incident type", Incident_S: "Station area", Incident_W: "Ward",
-
-    Response_T: "Response time (sec)", Service_Ti: "Service time (sec)",
-
-    Allocated_Station: "Allocated station", Unique_Incidents: "Incident count", Grid_Total_Incidents: "Incident count",
-
-    Allocated_Demand: "Allocated demand", Density_Basis: "Demand basis", Demand_Type: "Demand type",
-
-    FreeFlow_Time_sec: "Free-flow travel time (sec)", Average_FreeFlow_Time_sec: "Average free-flow travel time (sec)",
-
-    Baseline_FreeFlow_Time_sec: "Baseline travel time (sec)", FreeFlow_Change_sec: "Travel-time change (sec)",
-
-    Average_Response_Time_sec_GridBased: "Average response time (sec)", Median_Response_Time_sec_GridBased: "Median response time (sec)",
-
-    Allocated_Service_Workload_sec: "Allocated service workload (sec)", Average_Service_Time_sec: "Average service time (sec)",
-
-    Effective_Path_Count_Under240: "MVC paths within 240 sec", Average_Effective_Path_Count_Under240: "Weighted average MVC paths",
-
-    Average_Paths_Weighting: "Path weighting", Baseline_MVC_Avg_sec: "Baseline MVC travel time (sec)", S3_MVC_Avg_sec: "S3 MVC travel time (sec)",
-
-    Improvement_sec: "Improvement (sec)", Improvement_pct: "Improvement (%)", Abs_Change: "Absolute change (sec)",
-
-    Shape_Area: "Area (m²)", Shape_Length: "Boundary length (m)", Grid_Area_m2: "Grid area (m²)", SUM: "Total predicted demand",
-
-  };
-
-  if (labels[key]) return labels[key];
-
-  const acronyms: Record<string,string> = {mvc:"MVC",nonmvc:"non-MVC",rf:"RF",xgb:"XGB",id:"ID",od:"OD",rts:"response time"};
-
-  const words=key.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/_/g," ").trim().split(/\s+/);
-
-  return words.map((word,index)=>acronyms[word.toLowerCase()] ?? (word.toLowerCase()==="sec" ? "(sec)" : word.toLowerCase()==="pct" ? "(%)" : word.toLowerCase()==="m2" ? "(m²)" : index===0 ? word.charAt(0).toUpperCase()+word.slice(1).toLowerCase() : word.toLowerCase())).join(" ");
-
-}
-
-function displayAttribute(value: unknown) {
-
-  if (typeof value === "number" && Number.isFinite(value)) return Number.isInteger(value) ? String(value) : value.toFixed(2);
-
-  if (typeof value === "string" && /^-?\d+\.\d+$/.test(value)) return Number(value).toFixed(2);
-
-  return String(value ?? "");
 
 }
 
@@ -1974,117 +1669,6 @@ function MapPanel({
 
 }
 
-function AttributeTable({ layer, isOpen, onClose }: { layer: LayerDefinition | null; isOpen: boolean; onClose: () => void }) {
-
-  const [features, setFeatures] = useState<GeoJsonFeature[]>([]);
-
-  useEffect(() => {
-
-    if (!isOpen || !layer) return;
-
-    const controller = new AbortController();
-
-    setFeatures([]);
-
-    fetch(layer.url, { signal: controller.signal })
-
-      .then((response) => {
-        if (!response.ok) throw new Error("Could not load layer attributes.");
-        return response.json();
-      })
-
-      .then((geojson: GeoJsonCollection) => {
-
-        const nextFeatures = geojson.features ?? [];
-
-        if (!controller.signal.aborted) setFeatures(layer.id === "fire_stations" ? nextFeatures.filter((feature) => !isFireStationZero(feature.properties ?? {})) : nextFeatures);
-
-      })
-
-      .catch(() => { if (!controller.signal.aborted) setFeatures([]); });
-
-    return () => controller.abort();
-
-  }, [isOpen, layer]);
-
-  const columns = useMemo(() => {
-
-    const names = new Set<string>();
-
-    features.slice(0, 200).forEach((feature) => {
-
-      Object.keys(feature.properties ?? {}).forEach((key) => names.add(key));
-
-    });
-
-    return Array.from(names).slice(0, 16);
-
-  }, [features]);
-
-  if (!isOpen || !layer) return null;
-
-  return (
-
-    <section className="attribute-table" aria-label="Attribute table">
-
-      <div className="attribute-head">
-
-        <div>
-
-          <p className="eyebrow">Attribute table</p>
-
-          <h2>{layer.label}</h2>
-
-        </div>
-
-        <button type="button" onClick={onClose}>Close</button>
-
-      </div>
-
-      <div className="table-scroll">
-
-        <table>
-
-          <thead>
-
-            <tr>
-
-              <th>#</th>
-
-              {columns.map((column) => <th key={column} title={column}>{attributeLabel(column)}</th>)}
-
-            </tr>
-
-          </thead>
-
-          <tbody>
-
-            {features.slice(0, 500).map((feature, index) => (
-
-              <tr key={index}>
-
-                <td>{index + 1}</td>
-
-                {columns.map((column) => <td key={column} className={typeof feature.properties?.[column] === "number" ? "numeric-cell" : undefined}>{displayAttribute(feature.properties?.[column])}</td>)}
-
-              </tr>
-
-            ))}
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-      <p className="small">Showing {Math.min(features.length, 500).toLocaleString()} of {features.length.toLocaleString()} features.</p>
-
-    </section>
-
-  );
-
-}
-
 function LayerRow({
 
   layer,
@@ -2128,739 +1712,6 @@ function LayerRow({
       </label>
 
       {layer.kind !== "raster" && <button type="button" onClick={onTable}>Table</button>}
-
-    </div>
-
-  );
-
-}
-
-function shortScenarioName(value: string) {
-
-  return value.replace("Scenario ", "S").replace("Allocation_under_", "");
-
-}
-
-function valueLabel(value?: number | null) {
-
-  return value == null ? "—" : value.toFixed(2);
-
-}
-
-function percentChangeLabel(baseline?: number | null, value?: number | null) {
-
-  if (!baseline || value == null) return "";
-
-  const change = ((baseline - value) / baseline) * 100;
-
-  const direction = change >= 0 ? "improvement" : "worse";
-
-  return `${Math.abs(change).toFixed(2)}% ${direction} (${value.toFixed(2)} sec)`;
-
-}
-
-function travelLegendLabel(row: TravelTimeRow) {
-
-  return `MVC ${valueLabel(row.mvc)} | non_MVC ${valueLabel(row.remaining)} | Overall ${valueLabel(row.overall)} sec`;
-
-}
-
-function CoverageLineChart({ rows, title }: { rows: CoverageRow[]; title: string }) {
-  const [highlight,setHighlight]=useState<string|null>(null);
-  const thresholds=[120,180,240,300,360];
-  const styles=[{color:"#64748b",dash:"7 4"},{color:"#356fc3",dash:""},{color:"#8b5cbd",dash:"3 3"},{color:"#078895",dash:""},{color:"#c77727",dash:"9 3 2 3"}];
-  const x=(index:number)=>40+index*65;
-  const y=(coverage:number)=>186-coverage*156;
-  return <div className="diagnostic-scenario-group coverage-line-group">
-    <h4>{title}</h4>
-    <svg className="coverage-line-chart" viewBox="0 0 320 235" role="img" aria-label={`${title}: weighted travel-time coverage by threshold`}>
-      <text x="40" y="14" className="coverage-axis-title">Coverage (%)</text>
-      {[0,25,50,75,100].map(t=><g key={t}><line x1="40" x2="300" y1={y(t/100)} y2={y(t/100)} className="coverage-grid"/><text x="32" y={y(t/100)+3} textAnchor="end" className="coverage-tick">{t}</text></g>)}
-      {thresholds.map((t,index)=><text key={t} x={x(index)} y="204" textAnchor="middle" className="coverage-tick">{t}</text>)}
-      <text x="170" y="225" textAnchor="middle" className="coverage-axis-title">Travel-time threshold (sec)</text>
-      {rows.map((row,index)=>{
-        const style=styles[index%styles.length];
-        return <g key={row.Scenario} opacity={highlight && highlight!==row.Scenario?.toString() ? .14 : 1}>
-          <polyline points={row.Coverage.map((v,i)=>`${x(i)},${y(v)}`).join(" ")} fill="none" stroke={style.color} strokeWidth={highlight===row.Scenario?3:2} strokeDasharray={style.dash} strokeLinejoin="round" strokeLinecap="round"/>
-          {row.Coverage.map((value,i)=><circle key={i} data-coverage={value} data-threshold={thresholds[i]} tabIndex={0} aria-label={`${row.Scenario}, within ${thresholds[i]} seconds: ${(value*100).toFixed(2)}% coverage`} cx={x(i)} cy={y(value)} r={highlight===row.Scenario?4:2.7} fill="#fff" stroke={style.color} strokeWidth="1.5"><title>{row.Scenario}: ≤{thresholds[i]} sec — {(value*100).toFixed(2)}%</title></circle>)}
-        </g>;
-      })}
-    </svg>
-    <div className="coverage-line-legend" role="group" aria-label={`${title} scenario highlighting`}>
-      {rows.map((row,index)=><button key={row.Scenario} type="button" aria-pressed={highlight===row.Scenario} onClick={()=>setHighlight(highlight===row.Scenario?null:row.Scenario)}><svg width="22" height="10" aria-hidden="true"><line x1="1" x2="21" y1="5" y2="5" stroke={styles[index%styles.length].color} strokeWidth="2" strokeDasharray={styles[index%styles.length].dash}/></svg>{row.Scenario}</button>)}
-    </div>
-    <p className="chart-note">Select a scenario to highlight its line; hover over a point for its exact percentage.</p>
-
-  </div>;
-}
-
-function ScenarioTravelComparison({ rows }: { rows: TravelTimeRow[] }) {
-  const [metric, setMetric] = useState<"mvc" | "remaining" | "overall">("mvc");
-  const metrics = [{key:"mvc" as const,label:"MVC",color:"#078895"},{key:"remaining" as const,label:"non_MVC",color:"#356fc3"},{key:"overall" as const,label:"Overall",color:"#8260b8"}];
-  const selected = metrics.find(m=>m.key===metric)!;
-  const values=rows.flatMap(row=>metrics.map(m=>row[m.key])).filter((v):v is number=>v!=null && Number.isFinite(v));
-  const minimum=Math.floor(Math.min(...values)/5)*5;
-  const maximum=Math.max(minimum+5,Math.ceil(Math.max(...values)/5)*5);
-  const x=(value:number)=>72+(value-minimum)/(maximum-minimum)*206;
-  return <div className="scenario-travel-comparison">
-    <div className="travel-metric-picker" role="group" aria-label="Travel-time measure">
-      {metrics.map(m=><button key={m.key} type="button" aria-pressed={metric===m.key} onClick={()=>setMetric(m.key)}>{m.label}</button>)}
-    </div>
-    <p className="chart-note">Travel time (sec). All scenarios use the same scale; lower values indicate shorter travel times.</p>
-    {(rows.some(row=>row.scenario.toUpperCase().includes("RF")) ? ["RF","XGB"] : ["Historical"]).map(variant=>{
-      const group=variant==="Historical" ? rows : rows.filter(r=>r.scenario.toUpperCase().includes(variant));
-      const baseline=group.find(r=>r.scenario.toLowerCase().includes("existing condition"));
-      const baselineValue=baseline?.[metric];
-      return <section className="chart-block travel-comparison-card" key={variant} aria-label={`${variant} travel-time comparison`}>
-        <div className="travel-comparison-heading"><h3>{variant}</h3><span>{selected.label} · sec</span></div>
-        {baseline && <p className="travel-baseline"><span>{baseline.scenario}</span><strong>{valueLabel(baselineValue)} sec</strong></p>}
-        <svg viewBox={`0 0 310 ${group.length*34+36}`} className="travel-dot-chart" role="img" aria-label={`${variant} ${selected.label} travel times by scenario`}>
-          {[minimum,(minimum+maximum)/2,maximum].map(t=><g key={t}><line x1={x(t)} x2={x(t)} y1="7" y2={group.length*34} className="travel-dot-grid"/><text x={x(t)} y={group.length*34+22} textAnchor="middle" className="travel-dot-tick">{valueLabel(t)}</text></g>)}
-          {baselineValue!=null && <line x1={x(baselineValue)} x2={x(baselineValue)} y1="7" y2={group.length*34} className="travel-baseline-rule"/>}
-          {group.map((row,index)=>{
-            const value=row[metric]; const y=22+index*34;const isBaseline=row===baseline;
-            const short=row.scenario.match(/Scenario (\d+(?:\.\d+)?)/);
-            const label=isBaseline ? "Existing" : short ? `S${short[1]}` : shortScenarioName(row.scenario);
-            return <g key={row.scenario}><title>{row.scenario}: {selected.label} {valueLabel(value)} sec</title><text x="4" y={y+4} className={`travel-dot-label ${isBaseline ? "baseline" : ""}`}>{label}</text>{value!=null && <><line x1="72" x2={x(value)} y1={y} y2={y} className="travel-dot-guide"/><circle cx={x(value)} cy={y} r={isBaseline?4:5} fill={isBaseline?"#fff":selected.color} stroke={isBaseline?"#6b7b8b":selected.color} strokeWidth="2"/><text x={x(value)} y={y-10} textAnchor="middle" className="travel-dot-value">{valueLabel(value)}</text></>}</g>;
-          })}
-        </svg>
-
-        {baseline && <details className="travel-value-details"><summary>Improvement (%)</summary><div className="change-table"><table><thead><tr><th>Scenario</th><th>MVC improvement (%)</th><th>non_MVC improvement (%)</th><th>Overall improvement (%)</th></tr></thead><tbody>{group.filter(row=>row!==baseline).map(row=><tr key={row.scenario}><td>{shortScenarioName(row.scenario)}</td>{metrics.map(m=><td key={m.key}>{percentChangeLabel(baseline[m.key],row[m.key])}</td>)}</tr>)}</tbody></table></div></details>}
-      </section>;
-    })}
-  </div>;
-}
-
-function TravelTimeChart({ rows }: { rows: TravelTimeRow[] }) {
-
-  const series = [
-
-    { key: "mvc" as const, label: "MVC", angle: -90 },
-
-    { key: "remaining" as const, label: "non_MVC", angle: 30 },
-
-    { key: "overall" as const, label: "Overall", angle: 150 },
-
-  ];
-
-  const colors = ["#111827", "#7c3aed", "#0891b2", "#dc2626", "#16a34a", "#f59e0b", "#2563eb", "#db2777", "#64748b", "#14b8a6"];
-
-  const dashPatterns = ["", "8 3", "4 3", "10 4 2 4", "2 3", "12 3", "6 2 2 2", "3 5", "9 2 2 2", "5 2"];
-
-  const custom = rows.some(row => row.scenario.startsWith("Custom:"));
-
-  const values = rows.flatMap(row => [row.mvc, row.remaining, row.overall]).filter((v): v is number => v != null && Number.isFinite(v));
-
-  const minValue = custom ? Math.max(0, Math.floor(Math.min(...values)/10)*10-10) : 110;
-
-  const tickMax = custom ? Math.max(minValue+20, Math.ceil(Math.max(...values)/10)*10) : 160;
-
-  const tickValues = Array.from({ length: Math.floor((tickMax - minValue) / 10) + 1 }, (_, index) => minValue + index * 10);
-
-  const isBaselineRow = (row: TravelTimeRow) => {
-
-    const scenario = row.scenario.trim().toLowerCase();
-
-    return scenario.includes("existing condition") || scenario === "baseline" || scenario.startsWith("baseline ");
-
-  };
-
-  const baselineRows = rows.filter(isBaselineRow);
-
-  const fallbackBaseline = baselineRows[0] ?? rows[0];
-
-  const scenarioRows = rows.filter((row) => !isBaselineRow(row));
-
-  const baselineForScenario = (row: TravelTimeRow) => {
-
-    const upper = row.scenario.toUpperCase();
-
-    if (upper.includes("XGB")) return baselineRows.find((item) => item.scenario.toUpperCase().includes("XGB")) ?? fallbackBaseline;
-
-    if (upper.includes("RF")) return baselineRows.find((item) => item.scenario.toUpperCase().includes("RF")) ?? fallbackBaseline;
-
-    return fallbackBaseline;
-
-  };
-
-  if (!custom) return <ScenarioTravelComparison rows={rows} />;
-
-  const center = 160;
-
-  const innerRadius = 30;
-
-  const radius = 112;
-
-  const point = (angle: number, value: number) => {
-
-    const radians = (angle * Math.PI) / 180;
-
-    const clamped = Math.min(tickMax, Math.max(value, minValue));
-
-    const scaled = innerRadius + ((clamped - minValue) / (tickMax - minValue)) * (radius - innerRadius);
-
-    return [center + Math.cos(radians) * scaled, center + Math.sin(radians) * scaled];
-
-  };
-
-  const labelPoint = (angle: number) => {
-
-    const radians = (angle * Math.PI) / 180;
-
-    const labelRadius = radius + 20;
-
-    return [center + Math.cos(radians) * labelRadius, center + Math.sin(radians) * labelRadius];
-
-  };
-
-  return (
-
-    <div className="chart-block radar-block">
-
-      <svg className="radar-chart" viewBox="0 0 320 320" role="img" aria-label="Average travel time radar chart">
-
-        {tickValues.map((tick) => (
-
-          <polygon
-
-            key={tick}
-
-            className="radar-grid"
-
-            points={series.map((item) => point(item.angle, tick).join(",")).join(" ")}
-
-          />
-
-        ))}
-
-        {tickValues.map((tick) => {
-
-          const [, y] = point(-90, tick);
-
-          return <text className="radar-tick-label" key={`tick-${tick}`} x={center + 5} y={y + 3}>{tick}</text>;
-
-        })}
-
-        {series.map((item) => {
-
-          const [x, y] = point(item.angle, tickMax);
-
-          const [labelX, labelY] = labelPoint(item.angle);
-
-          return (
-
-            <g key={item.key}>
-
-              <line className="radar-axis" x1={center} y1={center} x2={x} y2={y} />
-
-              <text className="radar-axis-label" x={labelX} y={labelY} textAnchor="middle">{item.label}</text>
-
-            </g>
-
-          );
-
-        })}
-
-        {rows.map((row, index) => {
-
-          const points = series.map((item) => point(item.angle, Number(row[item.key] ?? 0)).join(",")).join(" ");
-
-          return (
-
-            <polygon
-
-              key={row.scenario}
-
-              points={points}
-
-              fill={colors[index % colors.length]}
-
-              stroke={colors[index % colors.length]}
-
-              strokeDasharray={dashPatterns[index % dashPatterns.length]}
-
-              strokeDashoffset={index * 1.5}
-
-              className="radar-series"
-
-            />
-
-          );
-
-        })}
-
-      </svg>
-
-      <div className="chart-legend radar-legend">
-
-        {rows.map((row, index) => (
-
-          <span className="radar-legend-item" key={row.scenario} title={row.scenario}>
-
-            <i style={{ background: colors[index % colors.length] }} />
-
-            <strong>{shortScenarioName(row.scenario)}</strong>
-
-            <em>{travelLegendLabel(row)}</em>
-
-          </span>
-
-        ))}
-
-        <span className="chart-note">Radar scale spans {minValue}–{tickMax} sec in 10-sec intervals; lower travel time plots closer to the center.</span>
-
-      </div>
-
-      {fallbackBaseline && scenarioRows.length > 0 && (
-
-        <div className="change-table">
-
-          <table>
-
-            <thead>
-
-              <tr>
-
-                <th>Scenario</th>
-
-                <th>MVC improvement (%)</th>
-
-                <th>non_MVC improvement (%)</th>
-
-                <th>Overall improvement (%)</th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {scenarioRows.map((row) => {
-
-                const baseline = baselineForScenario(row);
-
-                return (
-
-                  <tr key={row.scenario}>
-
-                    <td>{shortScenarioName(row.scenario)}</td>
-
-                    <td>{percentChangeLabel(baseline?.mvc, row.mvc)}</td>
-
-                    <td>{percentChangeLabel(baseline?.remaining, row.remaining)}</td>
-
-                    <td>{percentChangeLabel(baseline?.overall, row.overall)}</td>
-
-                  </tr>
-
-                );
-
-              })}
-
-            </tbody>
-
-          </table>
-
-        </div>
-
-      )}
-
-    </div>
-
-  );
-
-}
-
-function StationAnalysisChart({ rows }: { rows: StationAnalysisRow[] }) {
-
-  const scenarioNames = Array.from(new Set(rows.map((row) => row.scenario)));
-
-  const maxTravel = Math.max(1, ...rows.flatMap((row) => [Number(row.mvcTravel ?? 0), Number(row.remainingTravel ?? 0)]));
-
-  const maxPaths = Math.max(1, ...rows.map((row) => Number(row.mvcEffectivePaths ?? 0)));
-
-  return (
-
-    <div className="chart-block station-chart">
-      <p className="scenario-selection-prompt">Please select a scenario to view its station results.</p>
-
-      {scenarioNames.map((scenario) => {
-
-        const scenarioRows = rows.filter((row) => row.scenario === scenario);
-
-        return (
-
-          <details className="station-scenario" key={scenario}>
-
-            <summary>{shortScenarioName(scenario)} <span>{scenarioRows.length} stations</span></summary>
-
-            <div className="station-table">
-              <div className="station-row station-column-headings">
-                <span>Station</span>
-                <span className="station-heading-mvc" title="Weighted average MVC travel time">MVC travel<br />(sec)</span>
-                <span className="station-heading-nonmvc" title="Weighted average non-MVC travel time">Non-MVC travel<br />(sec)</span>
-                <span className="station-heading-capacity" title="Allocation relative to the upper capacity allowance">Capacity<br />(% of upper allowance)</span>
-                <span className="station-heading-paths" title="Demand-weighted average number of MVC paths within 240 seconds">Weighted MVC paths<br />(≤240 sec)</span>
-              </div>
-
-
-              {scenarioRows.map((row) => (
-
-                <div className="station-row" key={`${row.scenario}-${row.station}`}>
-
-                  <span className="station-id">{row.station}</span>
-
-                  <span className="mini-bar purple" style={{ width: `${((row.mvcTravel ?? 0) / maxTravel) * 100}%` }} title={`MVC travel: ${valueLabel(row.mvcTravel)} sec`} />
-
-                  <span className="mini-bar cyan" style={{ width: `${((row.remainingTravel ?? 0) / maxTravel) * 100}%` }} title={`non_MVC travel: ${valueLabel(row.remainingTravel)} sec`} />
-
-                  <span className="mini-bar slate" style={{ width: `${Math.min(row.capacityUsedPercent ?? 0, 100)}%` }} title={`Capacity used: ${valueLabel(row.capacityUsedPercent)}%`} />
-
-                  <span className="mini-bar green" style={{ width: `${((row.mvcEffectivePaths ?? 0) / maxPaths) * 100}%` }} title={`MVC effective paths: ${valueLabel(row.mvcEffectivePaths)}`} />
-
-                </div>
-
-              ))}
-
-            </div>
-
-          </details>
-
-        );
-
-      })}
-
-      <div className="chart-legend">
-
-        <span><i className="purple" />MVC travel time (sec)</span>
-
-        <span><i className="cyan" />Non-MVC travel time (sec)</span>
-
-        <span><i className="slate" />Capacity (% of upper allowance)</span>
-
-        <span><i className="green" />Weighted MVC paths (≤240 sec)</span>
-
-      </div>
-
-    </div>
-
-  );
-
-}
-
-function manualWeightedAverage(
-
-  features: ManualAllocationGeoJSON["features"],
-
-  valueField: string,
-
-  weightField = "Unique_Incidents",
-
-) {
-
-  let weightedTotal = 0;
-
-  let weightTotal = 0;
-
-  const unweightedValues: number[] = [];
-
-  features.forEach((feature) => {
-
-    const value = numericValue(feature.properties[valueField]);
-
-    if (value === null) return;
-
-    const weight = numericValue(feature.properties[weightField]) ?? 0;
-
-    if (weight > 0) {
-
-      weightedTotal += value * weight;
-
-      weightTotal += weight;
-
-    }
-
-    unweightedValues.push(value);
-
-  });
-
-  if (weightTotal > 0) return weightedTotal / weightTotal;
-
-  return averageNumbers(unweightedValues);
-
-}
-
-function manualCapacitySummaryMap(result: ManualAllocationResult) {
-
-  const rows = result.diagnostics?.capacitySummary;
-
-  const map = new globalThis.Map<string, number | null>();
-
-  if (!Array.isArray(rows)) return map;
-
-  rows.forEach((item) => {
-
-    const row = item as Record<string, unknown>;
-
-    const station = String(row.station ?? "").trim();
-
-    if (!station || isStationZeroLabel(station)) return;
-
-    const mvcWorkload = numericValue(row.mvcWorkload) ?? 0;
-
-    const nonMvcWorkload = numericValue(row.nonMvcHistoricalWorkload) ?? 0;
-
-    const mvcCapacity = numericValue(row.mvcCapacity) ?? 0;
-
-    const nonMvcCapacity = numericValue(row.nonMvcCapacity) ?? 0;
-
-    const totalCapacity = mvcCapacity + nonMvcCapacity;
-
-    if (totalCapacity > 0) {
-
-      map.set(station, ((mvcWorkload + nonMvcWorkload + (numericValue(row.zeroWorkload) ?? 0)) / totalCapacity) * 100);
-
-      return;
-
-    }
-
-    const fallbackValues = [
-
-      numericValue(row.mvcCapacityUsedPercent),
-
-      numericValue(row.nonMvcHistoricalCapacityUsedPercent),
-
-    ].filter((value): value is number => value !== null);
-
-    map.set(station, averageNumbers(fallbackValues));
-
-  });
-
-  return map;
-
-}
-
-function manualStationAnalysisRows(result: ManualAllocationResult | null): StationAnalysisRow[] {
-
-  if (!result) return [];
-
-  const capacityByStation = manualCapacitySummaryMap(result);
-
-  const stations = new Set<string>();
-
-  [...result.mvcGeojson.features, ...result.nonMvcGeojson.features].forEach((feature) => {
-
-    const station = String(feature.properties.Allocated_Station ?? "").trim();
-
-    if (station && !isStationZeroLabel(station)) stations.add(station);
-
-  });
-
-  capacityByStation.forEach((_, station) => stations.add(station));
-
-  return Array.from(stations)
-
-    .sort((a, b) => {
-
-      const aValue = stationSortValue(a);
-
-      const bValue = stationSortValue(b);
-
-      return typeof aValue === "number" && typeof bValue === "number" ? aValue - bValue : String(aValue).localeCompare(String(bValue));
-
-    })
-
-    .map((station) => {
-
-      const mvcFeatures = result.mvcGeojson.features.filter((feature) => String(feature.properties.Allocated_Station ?? "").trim() === station);
-
-      const nonMvcFeatures = result.nonMvcGeojson.features.filter((feature) => {
-
-        const properties = feature.properties;
-
-        return String(properties.Allocated_Station ?? "").trim() === station && String(properties.Demand_Type ?? "") !== "Zero-Incident Territory";
-
-      });
-
-      return {
-
-        scenario: "Manual weighted allocation",
-
-        station,
-
-        mvcTravel: manualWeightedAverage(mvcFeatures, "FreeFlow_Time_sec", "Severity_Weight"),
-
-        remainingTravel: manualWeightedAverage(nonMvcFeatures, "FreeFlow_Time_sec", "Severity_Weight"),
-
-        capacityUsedPercent: capacityByStation.get(station) ?? null,
-
-        mvcEffectivePaths: manualWeightedAverage(mvcFeatures, "Effective_Path_Count_Under240"),
-
-      };
-
-    })
-
-    .filter((row) => row.mvcTravel !== null || row.remainingTravel !== null || row.capacityUsedPercent !== null || row.mvcEffectivePaths !== null);
-
-}
-
-function ManualScenarioSummary({ result }: { result: ManualAllocationResult | null }) {
-
-  if (!result) return null;
-
-  const rows = (result.diagnostics.capacitySummary ?? []) as Array<{station:string; mvcWorkload:number; nonMvcHistoricalWorkload:number; zeroWorkload:number; mvcBaseline:number; nonMvcBaseline:number; mvcCapacity:number; nonMvcCapacity:number}>;
-
-  const settings = result.diagnostics.capacityScenario;
-
-  const weights = result.diagnostics.weights;
-
-  const counts = result.diagnostics.allocationCounts;
-
-  const validPaths = result.mvcGeojson.features;
-
-  const incidents = validPaths.reduce((sum,f) => sum + Number(f.properties.Unique_Incidents ?? 0), 0);
-
-  const paths = incidents ? validPaths.reduce((sum,f) => sum + Number(f.properties.Total_IncidentWeighted_Path_Count ?? 0),0)/incidents : 0;
-
-  return <div className="chart-block">
-
-    <h3>Approximate allocation</h3>
-
-    <p className="small" role="status">{result.diagnostics.solver?.heuristicFallback ? "The search limit was reached; a capacity-checked heuristic allocation is displayed." : result.diagnostics.solver?.searchLimitReached ? "A stage reached its search time limit; the displayed allocation is feasible and passes capacity checks." : "Search completed with a feasible allocation."} Global optimality is not guaranteed.</p>
-
-    <p className="small">MVC up to {(settings.mvcUpper*100).toFixed(0)}%; non-MVC up to {(settings.nonMvcUpper*100).toFixed(0)}%; {settings.maxPaths} paths. Weights: MVC travel {weights.mvcTime.toFixed(2)}, paths {weights.mvcPaths.toFixed(2)}, non-MVC travel {weights.nonMvcTime.toFixed(2)}.</p>
-
-    <p className="small">Network weighted MVC paths: {paths.toFixed(2)}. Assigned grids: {counts.mvc} MVC, {counts.nonMvcHistorical} non-MVC and {counts.zeroTerritory} zero-incident territory.</p>
-
-    <details className="station-scenario"><summary>Station workload limits and utilization</summary>
-
-      <div className="change-table"><table><thead><tr><th>Station</th><th>MVC (% baseline)</th><th>Non-MVC (% baseline)</th><th>Combined utilization (% upper allowance, including zero grids)</th></tr></thead>
-
-        <tbody>{rows.map(r => <tr key={r.station}><td>{r.station}</td><td>{r.mvcBaseline ? (100*r.mvcWorkload/r.mvcBaseline).toFixed(2)+"%" : "—"}</td><td>{r.nonMvcBaseline ? (100*r.nonMvcHistoricalWorkload/r.nonMvcBaseline).toFixed(2)+"%" : "—"}</td><td>{r.mvcCapacity+r.nonMvcCapacity ? (100*(r.mvcWorkload+r.nonMvcHistoricalWorkload+r.zeroWorkload)/(r.mvcCapacity+r.nonMvcCapacity)).toFixed(2)+"%" : "—"}</td></tr>)}</tbody>
-
-      </table></div>
-
-    </details>
-
-  </div>;
-
-}
-
-function ManualStationAnalysisChart({ result }: { result: ManualAllocationResult | null }) {
-
-  const rows = manualStationAnalysisRows(result);
-
-  if (!rows.length) return null;
-
-  return (
-
-    <div className="chart-block manual-station-analysis">
-
-      <h3>Station analysis</h3>
-
-      <StationAnalysisChart rows={rows} />
-
-    </div>
-
-  );
-
-}
-
-function ScenarioBarChart({ rows, metric, title, unit, colorClass }: { rows: ScenarioSummaryRow[]; metric: "medianCapacityUsedPercent" | "averageMvcEffectivePaths" | "medianBaselineAllocationPercent" | "medianStationWeightedPaths"; title: string; unit: string; colorClass: string }) {
-
-  const visibleRows = rows.filter((row) => row[metric] != null);
-
-  const maxValue = Math.max(1, ...visibleRows.map((row) => Number(row[metric] ?? 0)));
-
-  if (visibleRows.length === 0) return <p className="small">No scenario summary values available for {title.toLowerCase()}.</p>;
-
-  return (
-
-    <div className="chart-block scenario-bar-chart">
-
-      <h3>{title}</h3>
-
-      {visibleRows.map((row) => {
-
-        const value = Number(row[metric] ?? 0);
-
-        return (
-
-          <div className="scenario-bar-row" key={`${title}-${row.scenario}`}>
-
-            <span className="scenario-bar-label" title={row.scenario}>{shortScenarioName(row.scenario)}</span>
-
-            <span className="scenario-bar-track"><span className={`scenario-bar-fill ${colorClass}`} style={{ width: `${(value / maxValue) * 100}%` }} /></span>
-
-            <span className="scenario-bar-value">{value.toFixed(2)}{unit}</span>
-
-          </div>
-
-        );
-
-      })}
-
-    </div>
-
-  );
-
-}
-
-function ExistingMetricLineChart({ title, values }: { title: string; values?: { mvc?: number | null; remaining?: number | null; overall?: number | null } }) {
-
-  const points = [
-
-    { key: "mvc", label: "MVC", value: values?.mvc },
-
-    { key: "remaining", label: "non_MVC", value: values?.remaining },
-
-    { key: "overall", label: "Overall", value: values?.overall },
-
-  ].filter((point) => point.value != null) as Array<{ key: string; label: string; value: number }>;
-
-  if (points.length === 0) return <p className="small">{title} is not available.</p>;
-
-  const maxValue = Math.max(...points.map((point) => point.value));
-
-  const minValue = Math.min(...points.map((point) => point.value));
-
-  const range = Math.max(1, maxValue - minValue);
-
-  const x = (index: number) => 24 + index * 90;
-
-  const y = (value: number) => 118 - ((value - minValue) / range) * 74;
-
-  const polyline = points.map((point, index) => `${x(index)},${y(point.value)}`).join(" ");
-
-  return (
-
-    <div className="context-line-chart">
-
-      <h3>{title}</h3>
-
-      <svg viewBox="0 0 230 150" role="img" aria-label={title}>
-
-        <line className="context-chart-axis" x1="24" y1="118" x2="205" y2="118" />
-
-        <line className="context-chart-axis" x1="24" y1="36" x2="24" y2="118" />
-
-        <polyline className="context-chart-line" points={polyline} />
-
-        {points.map((point, index) => (
-
-          <g key={point.key}>
-
-            <circle className="context-chart-point" cx={x(index)} cy={y(point.value)} r="4" />
-
-            <text className="context-chart-value" x={x(index)} y={y(point.value) - 8} textAnchor="middle">{valueLabel(point.value)}</text>
-
-            <text className="context-chart-label" x={x(index)} y="137" textAnchor="middle">{point.label}</text>
-
-          </g>
-
-        ))}
-
-      </svg>
 
     </div>
 
@@ -2972,7 +1823,7 @@ function ContextInformationPanel({ data }: { data?: ContextInfoData }) {
 
             <thead>
 
-              <tr><th>Station</th><th>Free-flow time</th><th>MVC response</th><th>non_MVC response</th></tr>
+              <tr><th>Station</th><th>Free-flow time</th><th>MVC response</th><th>Non-MVC response</th></tr>
 
             </thead>
 
@@ -3134,7 +1985,7 @@ function AnalysisPanel({
 
       </div>
 
-      {!tabData ? <p className="small">Run the layer export to generate analysis data.</p> : null}
+      {!tabData ? <p className="small">Analysis is not available yet.</p> : null}
 
       {showTravel && tabData && <TravelTimeChart rows={tabData.travelTime} />}
 
@@ -3191,6 +2042,11 @@ export function App() {
 
   const [layers, setLayers] = useState<LayerDefinition[]>([]);
 
+  const [layersState, setLayersState] = useState<"loading" | "ready" | "error">("loading");
+  const [analysisState, setAnalysisState] = useState<"loading" | "ready" | "error">("loading");
+  const [layersAttempt, setLayersAttempt] = useState(0);
+  const [analysisAttempt, setAnalysisAttempt] = useState(0);
+
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
 
   const [visibleLayers, setVisibleLayers] = useState<Record<string, boolean>>({});
@@ -3217,9 +2073,9 @@ export function App() {
 
   const manualAbort = useRef<AbortController | null>(null);
 
-  const [weights, setWeights] = useState({ mvcTime: 0.60, mvcPaths: 0.20, nonMvcTime: 0.20 });
+  const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
 
-  const [manualSettings, setManualSettings] = useState({ mvcLower: 0, mvcUpper: 1.3, nonMvcLower: 0, nonMvcUpper: 1.3, maxPaths: 250 as 250 | 500 });
+  const [manualSettings, setManualSettings] = useState(DEFAULT_MANUAL_SETTINGS);
 
   const bandsValid = [manualSettings.mvcLower, manualSettings.nonMvcLower].every(v => Number.isFinite(v) && v === 0) && [manualSettings.mvcUpper, manualSettings.nonMvcUpper].every(v => Number.isFinite(v) && v >= 1.3 && v <= 2);
 
@@ -3248,36 +2104,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
-
-    fetch(assetUrl("layers/manifest.json"))
-
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-
+    const controller = new AbortController();
+    setLayersState("loading");
+    fetch(assetUrl("layers/manifest.json"), { signal: controller.signal })
+      .then(response => { if (!response.ok) throw new Error("Layer request failed"); return response.json(); })
       .then((manifest: { layers: LayerDefinition[] }) => {
-
-        const webLayers = manifest.layers.map((layer) => ({ ...layer, url: /^https?:\/\//.test(layer.url) ? layer.url : assetUrl(layer.url) }));
-
+        if (!Array.isArray(manifest.layers) || !manifest.layers.length) throw new Error("No layers available");
+        const webLayers = manifest.layers.map(layer => ({ ...layer,
+          label: displayLabel(layer.label),
+          groupLabel: layer.groupLabel ? displayLabel(layer.groupLabel) : undefined,
+          scenarioTitle: layer.scenarioTitle ? displayLabel(layer.scenarioTitle) : undefined,
+          url: /^https?:\/\//.test(layer.url) ? layer.url : assetUrl(layer.url),
+        }));
+        if (controller.signal.aborted) return;
         setLayers(webLayers);
-
         setVisibleLayers(openingVisibleLayers(webLayers));
-
+        initializedWorkspaces.current = new Set(["context"]);
+        setLayersState("ready");
       })
-
-      .catch(() => setLayers([]));
-
-  }, []);
+      .catch(() => { if (!controller.signal.aborted) setLayersState("error"); });
+    return () => controller.abort();
+  }, [layersAttempt]);
 
   useEffect(() => {
-
-    fetch(assetUrl("layers/analysis.json"))
-
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-
-      .then(setAnalysis)
-
-      .catch(() => setAnalysis(null));
-
-  }, []);
+    const controller = new AbortController();
+    setAnalysisState("loading");
+    fetch(assetUrl("layers/analysis.json"), { signal: controller.signal })
+      .then(response => { if (!response.ok) throw new Error("Analysis request failed"); return response.json(); })
+      .then((data: AnalysisData) => {
+        if (!data?.historical || !data?.ml) throw new Error("Analysis unavailable");
+        if (controller.signal.aborted) return;
+        setAnalysis(data);
+        setAnalysisState("ready");
+      })
+      .catch(() => { if (!controller.signal.aborted) setAnalysisState("error"); });
+    return () => controller.abort();
+  }, [analysisAttempt]);
 
   const weightTotal = weights.mvcTime + weights.mvcPaths + weights.nonMvcTime;
 
@@ -3381,7 +2243,7 @@ export function App() {
 
         </div>
 
-        <span className="status">{layers.length > 0 ? "Ready" : "Loading map layers…"}</span>
+        <span className={`status ${layersState === "error" || analysisState === "error" ? "status-error" : ""}`} role="status">{layersState === "error" || analysisState === "error" ? "Some data could not load" : layersState === "loading" || analysisState === "loading" ? "Loading app data…" : "Ready"}</span>
 
       </header>
 
@@ -3402,6 +2264,7 @@ export function App() {
       <section className={`workspace ${attributeLayerId ? "table-open" : ""}`}>
 
         <aside className="controls">
+          {layersState === "error" && <div className="load-feedback" role="alert"><p>Could not load map layers. Check your connection and try again.</p><button type="button" onClick={() => setLayersAttempt(value => value + 1)}>Retry map layers</button></div>}
 
           <p className="eyebrow">{workspaceCopy[workspace].title}</p>
 
@@ -3413,7 +2276,7 @@ export function App() {
 
               {workspaceLayers.length === 0 ? (
 
-                <p className="small">No exported layers found. Run `python tools/export_map_layers.py` from the project root.</p>
+                <p className="small">{layersState === "loading" ? "Loading available map layers…" : layersState === "error" ? "Map layers are unavailable." : "No layers are available in this workspace."}</p>
 
               ) : (
 
@@ -3523,13 +2386,16 @@ export function App() {
 
             <>
 
+              <p className="small">Choose weights from 0 to 1 that add up to 1.00.</p>
               <label>MVC travel-time weight <input type="number" min="0" max="1" step="0.05" value={weights.mvcTime} onChange={(e) => setWeights({ ...weights, mvcTime: Math.min(1, Math.max(0, Number(e.target.value))) })} /></label>
 
               <label>MVC path-accessibility weight <input type="number" min="0" max="1" step="0.05" value={weights.mvcPaths} onChange={(e) => setWeights({ ...weights, mvcPaths: Math.min(1, Math.max(0, Number(e.target.value))) })} /></label>
 
               <label>Non-MVC travel-time weight <input type="number" min="0" max="1" step="0.05" value={weights.nonMvcTime} onChange={(e) => setWeights({ ...weights, nonMvcTime: Math.min(1, Math.max(0, Number(e.target.value))) })} /></label>
 
-              <p className="small">Upper workload limits (% of historical baseline; no lower bound)</p>
+              <p className={`weight-total ${weightsValid ? "valid" : "warning"}`} role="status">Total weight: {weightTotal.toFixed(2)} / 1.00</p>
+              <button type="button" className="restore-defaults" disabled={isRunning} onClick={() => { setWeights({ ...DEFAULT_WEIGHTS }); setManualSettings({ ...DEFAULT_MANUAL_SETTINGS }); setManualError(null); }}>Restore defaults</button>
+              <p className="small">Upper workload limits: 130–200% of historical baseline; no lower bound.</p>
 
               {([
 
@@ -3577,7 +2443,9 @@ export function App() {
 
         <aside className="results">
 
-          <AnalysisPanel workspace={workspace} data={analysis} manualRows={manualTravelRows} manualResult={manualResult} />
+          {analysisState === "loading" && <p className="small" role="status">Loading analysis…</p>}
+          {analysisState === "error" && <div className="load-feedback" role="alert"><p>Could not load analysis data. Check your connection and try again.</p><button type="button" onClick={() => setAnalysisAttempt(value => value + 1)}>Retry analysis</button></div>}
+          {(analysisState === "ready" || workspace === "manual") && <AnalysisPanel workspace={workspace} data={analysis} manualRows={manualTravelRows} manualResult={manualResult} />}
 
         </aside>
 
