@@ -1,4 +1,4 @@
-"""Build every scenario's station comparison map from the published analysis.
+"""Build every Historical scenario's station comparison map from the published analysis.
 
 Run from any directory: python scripts/build_station_change_layers.py
 No optimization or baseline values are recomputed.
@@ -29,25 +29,22 @@ def build():
                 for f in read('fire_stations.geojson')['features']
                 if int(f['properties']['STATION10']) != 0}
     allocation_layers = [layer for layer in manifest['layers']
-                         if layer.get('workspace') in ('historical', 'ml')
+                         if layer.get('workspace') == 'historical'
                          and layer['id'].endswith('_mvc') and not layer['id'].endswith('_non_mvc')]
-    assert len(allocation_layers) == 12, 'Expected four Historical, four RF, and four XGB scenarios'
+    assert len(allocation_layers) == 4, 'Expected four Historical scenarios'
     manifest['layers'] = [layer for layer in manifest['layers'] if not layer['id'].endswith('_station_changes')]
     for allocation in allocation_layers:
         workspace = allocation['workspace']
         scenario = allocation['scenario']
         number = int(scenario.split()[1].split('.')[0])
-        variant = 'Historical' if workspace == 'historical' else 'RF' if ' RF' in scenario else 'XGB'
+        variant = 'Historical'
         rows = [row for row in analysis[workspace]['stationChange']
                 if row['scenario'].split(':', 1)[0] == scenario]
         assert rows, f'Missing station comparisons: {scenario}'
         by_station = {str(row['station']): row for row in rows}
         assert len(by_station) == len(rows), f'Duplicate stations: {scenario}'
         assert set(by_station) <= set(stations), f'Unknown station: {scenario}'
-        # Preserve existing Scenario 3 URLs while extending the same layer to all others.
-        layer_id = (f'allocation_historical_s{number}_station_changes' if workspace == 'historical'
-                    else 'allocation_ml_s3_station_changes' if variant == 'RF' and number == 3
-                    else f'allocation_ml_{variant.lower()}_s{number}_station_changes')
+        layer_id = f'allocation_historical_s{number}_station_changes'
         features = []
         for station, geometry in sorted(stations.items(), key=lambda item: int(item[0])):
             row = by_station.get(station, {})
